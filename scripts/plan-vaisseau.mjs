@@ -14,13 +14,13 @@ const LEGEND_W = 380
 const PALETTE = {
   FFCCCCCC: '#16213d', // sols
   FF6D9EEB: '#2a5bd7', // cases bleues
-  FFFF9900: '#ffb02e', // cases orange
+  FFFF9900: '#ff8a2a', // caméras de surveillance
 }
 // Bordures Excel (murs, portes…) → couleurs du thème. Les fines bordures grises = quadrillage, ignorées.
 const BORDER_COLORS = {
   FF000000: '#38e8ff', // murs
-  FFFF0000: '#ff5a5a',
-  FFFFFF00: '#ffd84a',
+  FFFF0000: '#ff4d5e', // portes
+  FFFFFF00: '#ffd84a', // accès techniques (gaines électriques, ventilation)
   FF00FFFF: '#4dffa6',
   FF76A5AF: '#76a5af',
   FF6D9EEB: '#5b8cff',
@@ -85,7 +85,15 @@ for (const deck of decks) {
   const mapH = (maxR - minR + 1) * CELL
   const legend = [...rooms.entries()].filter(([, name]) => name).sort(([a], [b]) => a.localeCompare(b, 'fr', { numeric: true }))
   const width = mapW + LEGEND_W
-  const height = Math.max(mapH, 90 + legend.length * 26)
+  // Légende des symboles, puis des salles
+  const SYMBOLS = [
+    ['line', BORDER_COLORS.FF000000, 'Murs'],
+    ['line', BORDER_COLORS.FFFF0000, 'Portes'],
+    ['line', BORDER_COLORS.FFFFFF00, 'Accès techniques (électricité, ventilation)'],
+    ['rect', PALETTE.FFFF9900, 'Caméras de surveillance'],
+  ]
+  const roomsTop = 84 + SYMBOLS.length * 26 + 20
+  const height = Math.max(mapH, roomsTop + legend.length * 26)
 
   // Regroupe les cases voisines de même couleur sur une ligne (SVG plus léger)
   const rects = []
@@ -121,7 +129,15 @@ for (const deck of decks) {
       .map((l) => `<text x="${(l.c - minC + 0.5) * CELL}" y="${(l.r - minR + 0.5) * CELL}" font-family="Segoe UI, sans-serif" font-size="${CELL * 0.75}" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central" shape-rendering="auto">${esc(l.text)}</text>`),
     `<g font-family="Segoe UI, sans-serif" shape-rendering="auto">`,
     `<text x="${mapW + 24}" y="44" font-size="26" font-weight="700" fill="#38e8ff" letter-spacing="3">GAÏA · ÉTAGE ${esc(deck.name)}</text>`,
-    ...legend.map(([code, name], i) => `<text x="${mapW + 24}" y="${84 + i * 26}" font-size="16" fill="#cfe6ff"><tspan fill="#ff3dd8" font-weight="700">${esc(code)}</tspan>  ${esc(name)}</text>`),
+    ...SYMBOLS.map(([kind, color, label], i) => {
+      const y = 84 + i * 26
+      const icon = kind === 'line'
+        ? `<line x1="${mapW + 24}" y1="${y - 5}" x2="${mapW + 48}" y2="${y - 5}" stroke="${color}" stroke-width="5"/>`
+        : `<rect x="${mapW + 29}" y="${y - 12}" width="14" height="14" fill="${color}"/>`
+      return `${icon}<text x="${mapW + 60}" y="${y}" font-size="15" fill="#cfe6ff">${esc(label)}</text>`
+    }),
+    `<line x1="${mapW + 24}" y1="${roomsTop - 22}" x2="${width - 24}" y2="${roomsTop - 22}" stroke="#1c2a4d" stroke-width="1"/>`,
+    ...legend.map(([code, name], i) => `<text x="${mapW + 24}" y="${roomsTop + i * 26}" font-size="16" fill="#cfe6ff"><tspan fill="#ff3dd8" font-weight="700">${esc(code)}</tspan>  ${esc(name)}</text>`),
     `</g>`,
     `</svg>`,
   ].join('\n')
