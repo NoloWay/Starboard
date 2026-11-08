@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "import-fiches": "node scripts/import-excel.mjs"
+    "import-fiches": "node scripts/import-excel.mjs",
+    "plan-vaisseau": "node scripts/plan-vaisseau.mjs"
   },
   "dependencies": {
     "trystero": "^0.21.0",

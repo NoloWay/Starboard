@@ -60,6 +60,24 @@ main { flex: 1; display: flex; min-height: 0; }
 #board { width: 100%; height: 100%; display: block; cursor: grab; }
 #board.dragging { cursor: grabbing; }
 
+/* ---------- Plateau : barre des scènes, zoom ---------- */
+.stage-bar, .zoom-bar {
+  position: absolute;
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 10px;
+  background: rgba(11, 16, 34, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.stage-bar { top: 12px; left: 12px; }
+.stage-bar:empty { display: none; }
+.stage-bar input.short { width: 58px; }
+.scene-name { color: var(--accent); letter-spacing: 0.08em; }
+.zoom-bar { bottom: 12px; right: 12px; }
+#zoom-label { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sheet { z-index: 2; }
+
 /* ---------- Barre du haut : identité, modes de jet ---------- */
 .topbar { flex-wrap: wrap; }
 .identity { display: flex; gap: 8px; align-items: center; }

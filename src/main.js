@@ -2,6 +2,7 @@ import { connect } from './net.js'
 import { roll, rollFree, OUTCOME_LABEL, MODE_LABEL } from './dice.js'
 import { setupSheets, replaceCharacters } from './sheets.js'
 import { setupShip, writeShip } from './shipPanel.js'
+import { setupBoard } from './board.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -33,117 +34,15 @@ $('role-select').value = role
 const { doc } = connect(roomId, {
   onPeers: (n) => ($('peer-count').textContent = `${n} pair${n > 1 ? 's' : ''}`),
 })
-const tokens = doc.getMap('tokens') // id -> { x, y, color, label }
+const tokens = doc.getMap('tokens') // id -> { x, y, color, label, scene } (géré par board.js)
 const log = doc.getArray('log') //     [{ who, text, t, secret?, roll? }]
 
-// ---------- Rendu ----------
-const canvas = $('board')
-const ctx = canvas.getContext('2d')
-const GRID = 50
-const RADIUS = 20
-
-function resize() {
-  const r = canvas.getBoundingClientRect()
-  canvas.width = r.width * devicePixelRatio
-  canvas.height = r.height * devicePixelRatio
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
-  draw()
-}
-addEventListener('resize', resize)
-
-function draw() {
-  const { width, height } = canvas.getBoundingClientRect()
-  ctx.clearRect(0, 0, width, height)
-
-  ctx.strokeStyle = '#12203f'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  for (let x = 0; x < width; x += GRID) { ctx.moveTo(x, 0); ctx.lineTo(x, height) }
-  for (let y = 0; y < height; y += GRID) { ctx.moveTo(0, y); ctx.lineTo(width, y) }
-  ctx.stroke()
-
-  tokens.forEach((t) => {
-    ctx.shadowColor = t.color
-    ctx.shadowBlur = 14
-    ctx.fillStyle = t.color
-    ctx.beginPath()
-    ctx.arc(t.x, t.y, RADIUS, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.shadowBlur = 0
-    ctx.fillStyle = '#05070f'
-    ctx.font = '600 12px system-ui'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(t.label, t.x, t.y)
-  })
-}
-
-tokens.observe(draw)
-
-// ---------- Déplacement des pions ----------
-let dragId = null
-let offset = { x: 0, y: 0 }
-
-function pos(e) {
-  const r = canvas.getBoundingClientRect()
-  return { x: e.clientX - r.left, y: e.clientY - r.top }
-}
-
-canvas.addEventListener('pointerdown', (e) => {
-  const p = pos(e)
-  let hit = null
-  tokens.forEach((t, id) => {
-    if (Math.hypot(t.x - p.x, t.y - p.y) <= RADIUS) hit = id
-  })
-  if (!hit) return
-  dragId = hit
-  const t = tokens.get(hit)
-  offset = { x: t.x - p.x, y: t.y - p.y }
-  canvas.classList.add('dragging')
-  canvas.setPointerCapture(e.pointerId)
-})
-
-canvas.addEventListener('pointermove', (e) => {
-  if (!dragId) return
-  const p = pos(e)
-  const t = tokens.get(dragId)
-  if (t) tokens.set(dragId, { ...t, x: p.x + offset.x, y: p.y + offset.y })
-})
-
-function endDrag() {
-  if (!dragId) return
-  const t = tokens.get(dragId)
-  if (t) {
-    // Aimantation à la grille au relâchement
-    const snap = (v) => Math.round((v - GRID / 2) / GRID) * GRID + GRID / 2
-    tokens.set(dragId, { ...t, x: snap(t.x), y: snap(t.y) })
-  }
-  dragId = null
-  canvas.classList.remove('dragging')
-}
-canvas.addEventListener('pointerup', endDrag)
-canvas.addEventListener('pointercancel', endDrag)
-
-// ---------- Pions ----------
-const COLORS = ['#38e8ff', '#ff3dd8', '#9dff4a', '#ffb02e', '#a78bff', '#ff5a5a']
+// ---------- Plateau (scènes, caméra, pions) ----------
+const board = setupBoard({ doc, me })
 
 $('btn-add').addEventListener('click', () => {
   const label = prompt('Nom du pion (2-3 lettres) ?', playerName.slice(0, 2).toUpperCase())
-  if (!label) return
-  const id = crypto.randomUUID()
-  tokens.set(id, {
-    x: GRID * 2 + GRID / 2,
-    y: GRID * 2 + GRID / 2,
-    color: COLORS[tokens.size % COLORS.length],
-    label: label.slice(0, 3),
-  })
-})
-
-canvas.addEventListener('dblclick', (e) => {
-  const p = pos(e)
-  tokens.forEach((t, id) => {
-    if (Math.hypot(t.x - p.x, t.y - p.y) <= RADIUS) tokens.delete(id)
-  })
+  if (label) board.addToken(label)
 })
 
 // ---------- Jets ----------
@@ -233,13 +132,15 @@ $('role-select').addEventListener('change', (e) => {
   renderLog()
   sheets.rerender()
   ship.rerender()
+  board.rerender()
 })
 document.body.classList.toggle('is-gm', role === 'gm')
 
 // ---------- Export / import JSON ----------
 $('btn-export').addEventListener('click', () => {
   const data = {
-    version: 2,
+    version: 3,
+    ...board.exportData(), // scenes, images (base64), board
     tokens: tokens.toJSON(),
     log: log.toJSON(),
     characters: doc.getMap('characters').toJSON(),
@@ -266,16 +167,17 @@ $('file-import').addEventListener('change', async (e) => {
     alert('Fichier JSON illisible.')
     return
   }
-  const parts = ['tokens', 'log', 'characters', 'ship'].filter((k) => data[k] && Object.keys(data[k]).length)
-  const names = { tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau' }
+  const parts = ['scenes', 'tokens', 'log', 'characters', 'ship'].filter((k) => data[k] && Object.keys(data[k]).length)
+  const names = { scenes: 'scènes et cartes', tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau' }
   if (!parts.length) return alert('Aucune donnée Starboard dans ce fichier.')
   if (!confirm(`Remplacer pour tout le monde : ${parts.map((k) => names[k]).join(', ')} ?`)) return
+  if (parts.includes('scenes')) board.importData(data)
   doc.transact(() => {
-    if (data.tokens) {
+    if (parts.includes('tokens')) {
       tokens.clear()
       Object.entries(data.tokens).forEach(([id, t]) => tokens.set(id, t))
     }
-    if (data.log) {
+    if (parts.includes('log')) {
       log.delete(0, log.length)
       log.push(data.log)
     }
@@ -285,5 +187,4 @@ $('file-import').addEventListener('change', async (e) => {
 })
 
 // ---------- Démarrage ----------
-resize()
 renderLog()

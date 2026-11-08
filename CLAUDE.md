@@ -16,13 +16,18 @@ Aucun hébergement payant, aucun serveur à maintenir. Le seul coût accepté es
 ```
 index.html        # structure : barre du haut, canvas, journal
 src/net.js        # connect(roomId) : Y.Doc + Trystero + IndexedDB
-src/main.js       # rendu canvas, pions, identité/rôle, jets, journal, export/import
+src/main.js       # identité/rôle, jets, journal, export/import (assemble les modules)
+src/board.js      # plateau : scènes, image de fond partagée, caméra locale (pan/zoom), pions
+src/dom.js        # utilitaire h() pour créer des éléments
 src/rules.js      # règles : caractéristiques, compétences, badges, calcul des scores
 src/dice.js       # jets sous la valeur, critiques, avantage/désavantage
 src/sheets.js     # liste de l'équipage + fiche de personnage (données dans le Y.Doc)
 src/style.css     # thème néon futuriste (variables CSS en tête de fichier)
 scripts/import-excel.mjs  # npm run import-fiches : Excel de references/ → JSON importable
+scripts/plan-vaisseau.mjs # npm run plan-vaisseau : feuille « Map » de l'Excel de gestion → un SVG par étage
 ```
+- Plateau : `doc.getMap('scenes')` (id → `{name, order, image, width, height, grid, showGrid}`), `doc.getMap('images')` (id → `{type, data: Uint8Array}`, WebP ≤ 4096 px), `doc.getMap('board').get('scene')` = scène affichée chez tous (choisie par le MJ). Les pions ont un champ `scene` (absent = scène `main`). La caméra est locale à chaque joueur. L'export JSON encode les images en base64.
+- Plan Excel : remplissage noir = vide spatial, gris = sols, bordures noires moyennes = murs, bordures colorées épaisses = portes/accès (sens exact à confirmer). Cases de 24 px → régler « Case » à 24 dans la scène.
 - La salle = le hash de l'URL (`/#abc123`). Partager l'URL = inviter.
 - Données partagées : `doc.getMap('tokens')` (id → `{x, y, color, label}`), `doc.getArray('log')` (`{who, text, t, secret, roll?}`), `doc.getMap('characters')` (id → Y.Map : champs texte, `hidden`, `player`, `stats` Y.Map `{base, mod}`, `skills` Y.Map nom → niveau, `talents`/`passives` Y.Array `{name, desc}`).
 - Rôle (MJ / joueur) et nom : `localStorage`, par navigateur (rôle par salle). Le MJ voit les fiches cachées et les jets secrets ; une fiche avec un `player` n'est modifiable que par ce joueur et le MJ. Rien n'est réellement secret (tout est dans le Y.Doc de chacun).
@@ -37,12 +42,12 @@ Futuriste / espace : fond très sombre bleu nuit, accents néon cyan (`--accent`
 - `npm run preview` : teste le build
 
 ## Feuille de route suggérée (ordre de priorité)
-1. **Rôles MJ / joueur** : le MJ voit tout ; pions et zones cachés aux joueurs (champ `visibleTo` sur les objets).
-2. **Caméra** : pan + zoom sur le plateau (clic milieu / molette), grand plateau (carte stellaire / vaisseau).
-3. **Fond de carte** : importer une image (carte stellaire, plan de vaisseau) et la partager aux autres joueurs par WebRTC.
-4. **Fiches de personnage** adaptées aux règles originales (à définir avec le groupe : voir « Questions ouvertes »).
+1. ~~Rôles MJ / joueur~~ (fait : fiches cachées, jets secrets ; reste : pions cachés).
+2. ~~Caméra~~ (fait : glisser / clic milieu, molette, recadrer).
+3. ~~Fond de carte~~ (fait : scènes avec image partagée, plans du Gaïa générés depuis l'Excel).
+4. ~~Fiches de personnage~~ (fait) et ~~gestion du vaisseau~~ (fait).
 5. **Brouillard de guerre / zones révélées** par le MJ.
-6. **Dés personnalisés** correspondant aux règles du jeu, jets cachés ou publics.
+6. ~~Dés personnalisés~~ (fait : d20/d100 sous la valeur, critiques, avantage/désavantage, jets secrets).
 7. **Dessin libre et mesure de distance** (règle, rayon d'action, portée).
 8. **Cartes / jetons / ressources** (carburant, énergie, etc., selon le jeu).
 9. **Ambiance** : bruitages, musique locale, effets visuels d'alerte.
