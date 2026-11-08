@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starboard</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">STARBOARD</div>
+      <div class="status">
+        <span id="room-label">—</span>
+        <span id="peer-count">0 pair</span>
+      </div>
+      <div class="tools">
+        <button id="btn-add">+ Pion</button>
+        <button id="btn-d6">d6</button>
+        <button id="btn-d20">d20</button>
+        <button id="btn-export">Exporter</button>
+        <label class="btn" for="file-import">Importer</label>
+        <input id="file-import" type="file" accept="application/json" hidden />
+      </div>
+    </header>
+
+    <main>
+      <canvas id="board"></canvas>
+      <aside class="log">
+        <h2>Journal</h2>
+        <ul id="log-list"></ul>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
