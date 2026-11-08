@@ -4,7 +4,7 @@
 //   - murs, portes, accès techniques : traits continus fusionnés, symboles dédiés
 //   - caméras : icônes ; numéros de salles : pastilles
 // Usage : npm run plan-vaisseau → references/plans/gaia-etage-N.svg
-// Puis, dans le site (MJ) : « + Scène », « Image de fond », choisir le SVG, « Case » = CELL.
+// Puis, dans le site (MJ) : « + Scène », « Image de fond », choisir le SVG, « Jetons » = CELL.
 import ExcelJS from 'exceljs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 

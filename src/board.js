@@ -5,7 +5,7 @@ import { CHARACTER_MIME } from './sheets.js'
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
 //
 // Données partagées (Y.Doc) :
-//   scenes : id → { name, order, image (id | null), width, height, grid, showGrid }
+//   scenes : id → { name, order, image (id | null), width, height, grid (= taille des jetons) }
 //   images : id → { type, data: Uint8Array }   (image compressée en WebP, partagée en P2P)
 //   board  : 'scene' → id de la scène affichée chez tout le monde (choisie par le MJ)
 //   tokens : id → { x, y, color, label, scene }  (coordonnées « monde », en pixels de la carte)
@@ -57,9 +57,9 @@ export function setupBoard(ctx) {
 
   // ---------- Scène courante ----------
   const sceneId = () => (scenes.has(board.get('scene')) ? board.get('scene') : DEFAULT_SCENE)
-  const scene = () => scenes.get(sceneId()) ?? { name: 'Plateau', grid: 50, showGrid: true, image: null }
+  const scene = () => scenes.get(sceneId()) ?? { name: 'Plateau', grid: 50, image: null }
   const tokenScene = (t) => t.scene ?? DEFAULT_SCENE
-  const gridSize = () => Number(scene().grid) || 50
+  const tokenSize = () => Number(scene().grid) || 50
 
   // ---------- Caméra (locale, une par scène) ----------
   const cams = {}
@@ -125,22 +125,8 @@ export function setupBoard(ctx) {
       g.drawImage(bmp, 0, 0, s.width, s.height)
     }
 
-    // Grille sur la zone visible
-    // (masquée quand les cases font moins de 8 px à l'écran, sinon c'est illisible)
-    if (s.showGrid !== false && gridSize() * c.zoom >= 8) {
-      const step = gridSize()
-      const tl = toWorld(0, 0)
-      const br = toWorld(width, height)
-      g.strokeStyle = bmp ? 'rgba(56, 232, 255, 0.12)' : '#12203f'
-      g.lineWidth = 1 / c.zoom
-      g.beginPath()
-      for (let x = Math.floor(tl.x / step) * step; x < br.x; x += step) { g.moveTo(x, tl.y); g.lineTo(x, br.y) }
-      for (let y = Math.floor(tl.y / step) * step; y < br.y; y += step) { g.moveTo(tl.x, y); g.lineTo(br.x, y) }
-      g.stroke()
-    }
-
     // Pions de la scène (ceux des personnages cachés : invisibles aux joueurs, translucides pour le MJ)
-    const r = gridSize() * 0.4
+    const r = tokenSize() * 0.4
     tokens.forEach((t) => {
       if (!visible(t)) return
       const { label, color, hidden, isChar } = look(t)
@@ -177,7 +163,7 @@ export function setupBoard(ctx) {
   }
   function hitToken(world) {
     let hit = null
-    const r = gridSize() * 0.4
+    const r = tokenSize() * 0.4
     tokens.forEach((t, id) => {
       if (visible(t) && Math.hypot(t.x - world.x, t.y - world.y) <= r) hit = id
     })
@@ -214,15 +200,6 @@ export function setupBoard(ctx) {
   })
 
   function endDrag() {
-    if (drag?.kind === 'token') {
-      const t = tokens.get(drag.id)
-      if (t) {
-        // Aimantation au centre de la case au relâchement
-        const step = gridSize()
-        const snap = (v) => Math.floor(v / step) * step + step / 2
-        tokens.set(drag.id, { ...t, x: snap(t.x), y: snap(t.y) })
-      }
-    }
     drag = null
     canvas.classList.remove('dragging')
   }
@@ -252,7 +229,7 @@ export function setupBoard(ctx) {
   })
 
   // ---------- Pions ----------
-  const snap = (v) => Math.floor(v / gridSize()) * gridSize() + gridSize() / 2
+
 
   /** Jeton lié à un personnage : nom et couleur de badge lus en direct sur la fiche. */
   function look(t) {
@@ -268,7 +245,7 @@ export function setupBoard(ctx) {
     const c = characters.get(charId)
     if (!c) return
     const existing = [...tokens.entries()].find(([, t]) => t.charId === charId)
-    const pos = { x: snap(world.x), y: snap(world.y), scene: sceneId() }
+    const pos = { x: world.x, y: world.y, scene: sceneId() }
     if (existing) tokens.set(existing[0], { ...existing[1], ...pos })
     else tokens.set(crypto.randomUUID(), { ...pos, charId, label: look({ charId }).label, color: look({ charId }).color })
   }
@@ -288,7 +265,7 @@ export function setupBoard(ctx) {
     const { width, height } = view()
     const center = toWorld(width / 2, height / 2)
     tokens.set(crypto.randomUUID(), {
-      x: snap(center.x), y: snap(center.y),
+      x: center.x, y: center.y,
       color: COLORS[tokens.size % COLORS.length],
       label: label.slice(0, 3),
       scene: sceneId(),
@@ -299,7 +276,7 @@ export function setupBoard(ctx) {
   const sortedScenes = () => [...scenes.entries()].sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
 
   function ensureDefaultScene() {
-    if (!scenes.has(DEFAULT_SCENE)) scenes.set(DEFAULT_SCENE, { name: 'Plateau', order: 0, image: null, grid: 50, showGrid: true })
+    if (!scenes.has(DEFAULT_SCENE)) scenes.set(DEFAULT_SCENE, { name: 'Plateau', order: 0, image: null, grid: 50 })
   }
 
   function patchScene(changes) {
@@ -338,7 +315,7 @@ export function setupBoard(ctx) {
     const order = Math.max(0, ...[...scenes.values()].map((s) => s.order ?? 0)) + 1
     doc.transact(() => {
       ensureDefaultScene()
-      scenes.set(id, { name, order, image: null, grid: 50, showGrid: true })
+      scenes.set(id, { name, order, image: null, grid: 50 })
       board.set('scene', id)
     })
   }
@@ -372,14 +349,11 @@ export function setupBoard(ctx) {
         class: 'small',
         onclick: () => { const n = prompt('Nom de la scène ?', s.name)?.trim(); if (n) patchScene({ name: n }) },
       }, 'Renommer'),
-      isGM && h('label', { class: 'check', title: 'Taille d\'une case en pixels de la carte' }, 'Case',
+      isGM && h('label', { class: 'check', title: 'Taille des jetons, en pixels de la carte' }, 'Jetons',
         h('input', {
-          type: 'number', min: 4, max: 400, value: gridSize(), class: 'short',
+          type: 'number', min: 4, max: 400, value: tokenSize(), class: 'short',
           onchange: (e) => patchScene({ grid: Math.max(4, Math.min(400, Number(e.target.value) || 50)) }),
         })),
-      isGM && h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: s.showGrid !== false, onchange: (e) => patchScene({ showGrid: e.target.checked }) }),
-        'Grille'),
       isGM && sceneId() !== DEFAULT_SCENE && h('button', { class: 'small danger', onclick: deleteScene }, 'Supprimer'),
     ].filter(Boolean))
   }
