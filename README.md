@@ -12,7 +12,7 @@ Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de s
 ## Utilisation
 - **Plateau** : glisser dans le vide (ou clic milieu) pour déplacer la vue, molette pour zoomer, « Recadrer » pour voir toute la carte. Chacun cadre comme il veut.
 - **Scènes** (MJ, en haut du plateau) : créer une scène, lui donner une image de fond (partagée automatiquement), régler la taille des cases. La scène choisie par le MJ s'affiche chez tout le monde.
-- **Plans du Gaïa** : `npm run plan-vaisseau` génère `references/plans/gaia-etage-*.svg` depuis l'Excel de gestion ; les mettre en image de fond d'une scène, avec des cases de 24.
+- **Plans du Gaïa** : `npm run plan-vaisseau` génère `references/plans/gaia-etage-*.svg` depuis l'Excel de gestion ; les mettre en image de fond d'une scène, avec des cases de 40. Le plan est redessiné en vectoriel (coque lissée, murs continus, symboles de portes et caméras).
 - **+ Pion** : ajoute un pion au centre de la vue, sur la scène affichée. Glisser pour déplacer (aimanté à la grille). Double-clic pour le supprimer.
 - **Nom / rôle** (en haut) : cliquer sur le nom pour le changer ; choisir **MJ** ou **Joueur**.
 - **Équipage** (à gauche) : cliquer sur un personnage pour ouvrir sa fiche. Les scores se calculent seuls ; cliquer sur un score lance le dé (1d20 caractéristique, 1d100 compétence).
