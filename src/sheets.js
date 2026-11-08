@@ -59,6 +59,9 @@ export function replaceCharacters(doc, json) {
 
 // ---------- Interface ----------
 
+/** Type de donnée du glisser-déposer d'un personnage vers la carte (lu par board.js). */
+export const CHARACTER_MIME = 'application/x-starboard-character'
+
 const signed = (n) => (n > 0 ? `+${n}` : `${n}`)
 
 /**
@@ -90,12 +93,22 @@ export function setupSheets(ctx) {
         const pb = b.get('player') ? 0 : 1
         return pa - pb || a.get('name').localeCompare(b.get('name'))
       })
+    const isGM = ctx.me().isGM
     for (const [id, c] of entries) {
       const badge = BADGES.find((b) => b.name === c.get('badge'))
       listEl.append(h('li', {
-        class: `crew-item${id === openId ? ' active' : ''}${c.get('hidden') ? ' is-hidden' : ''}`,
+        class: `crew-item${id === openId ? ' active' : ''}${c.get('hidden') ? ' is-hidden' : ''}${isGM ? ' with-vis' : ''}`,
         onclick: () => open(id),
+        // MJ : glisser le personnage sur la carte crée (ou déplace) son jeton
+        draggable: isGM,
+        ondragstart: isGM && ((e) => { e.dataTransfer.setData(CHARACTER_MIME, id); e.dataTransfer.effectAllowed = 'copy' }),
+        title: isGM ? 'Glisser sur la carte pour placer son jeton' : null,
       },
+      isGM && h('input', {
+        type: 'checkbox', class: 'vis-toggle', checked: !c.get('hidden'), title: 'Visible par les joueurs',
+        onclick: (e) => e.stopPropagation(),
+        onchange: (e) => c.set('hidden', !e.target.checked),
+      }),
       h('span', { class: 'badge-dot', style: `--badge:${badge?.color ?? '#555'}`, title: `Badge ${c.get('badge')}` }),
       h('span', { class: 'crew-name' }, c.get('name')),
       h('span', { class: 'crew-post' }, c.get('player') ? `PJ · ${c.get('player')}` : c.get('post')),

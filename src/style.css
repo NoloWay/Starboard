@@ -134,7 +134,10 @@ textarea { resize: vertical; width: 100%; }
 }
 .crew-item:hover { background: rgba(56, 232, 255, 0.07); }
 .crew-item.active { background: rgba(56, 232, 255, 0.14); }
-.crew-item.is-hidden { opacity: 0.55; font-style: italic; }
+.crew-item.is-hidden .crew-name, .crew-item.is-hidden .crew-post { opacity: 0.5; font-style: italic; }
+.crew-item.with-vis { grid-template-columns: 14px 12px 1fr; cursor: grab; }
+.crew-item.with-vis .crew-post { grid-column: 3; }
+.vis-toggle { grid-row: span 2; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .crew-name { font-size: 0.9rem; }
 .crew-post { grid-column: 2; font-size: 0.72rem; color: var(--muted); }
 .badge-dot {

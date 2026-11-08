@@ -17,7 +17,7 @@ Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de s
 - **Nom / rôle** (en haut) : cliquer sur le nom pour le changer ; choisir **MJ** ou **Joueur**.
 - **Équipage** (à gauche) : cliquer sur un personnage pour ouvrir sa fiche. Les scores se calculent seuls ; cliquer sur un score lance le dé (1d20 caractéristique, 1d100 compétence).
 - **Normal / Avantage / Désavantage** et **Jet secret** (visible seulement par toi et le MJ) s'appliquent aux jets suivants.
-- **Fiches** : le MJ peut cacher une fiche aux joueurs. Le champ « Joueur » réserve la modification au joueur de ce nom (et au MJ).
+- **Fiches** : le MJ cache ou montre un personnage (fiche et jeton) avec la coche à gauche de son nom, et le glisse sur la carte pour placer son jeton (s'il existe déjà, il est déplacé). Le champ « Joueur » réserve la modification au joueur de ce nom (et au MJ).
 - **Vaisseau** (en haut à gauche, « Gaïa ») : énergie, systèmes, statistiques, générateurs, ressources, vivres et armement. La première fois, cliquer sur « Initialiser le Gaïa ». Les joueurs pilotent (états, énergie, stocks) ; dégâts, production et stats de base sont réservés au MJ.
 - **Musique** (colonne de droite) : le MJ colle un lien YouTube et clique « Lancer » ; la musique démarre chez tout le monde au même moment. Pause, arrêt, boucle, et « + Liste » pour garder ses ambiances sous la main. Chacun règle son propre volume.
 - **d6 / d20 / d100** : jets libres, visibles dans le journal de tous.

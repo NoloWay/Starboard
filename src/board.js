@@ -1,4 +1,6 @@
 import { h } from './dom.js'
+import { BADGES } from './rules.js'
+import { CHARACTER_MIME } from './sheets.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
 //
@@ -47,6 +49,7 @@ export function setupBoard(ctx) {
   const images = doc.getMap('images')
   const board = doc.getMap('board')
   const tokens = doc.getMap('tokens')
+  const characters = doc.getMap('characters')
 
   const canvas = document.getElementById('board')
   const g = canvas.getContext('2d')
@@ -136,22 +139,30 @@ export function setupBoard(ctx) {
       g.stroke()
     }
 
-    // Pions de la scène
+    // Pions de la scène (ceux des personnages cachés : invisibles aux joueurs, translucides pour le MJ)
     const r = gridSize() * 0.4
     tokens.forEach((t) => {
-      if (tokenScene(t) !== sceneId()) return
-      g.shadowColor = t.color
+      if (!visible(t)) return
+      const { label, color, hidden, isChar } = look(t)
+      g.globalAlpha = hidden ? 0.45 : 1
+      g.shadowColor = color
       g.shadowBlur = 14
-      g.fillStyle = t.color
+      g.fillStyle = color
       g.beginPath()
       g.arc(t.x, t.y, r, 0, Math.PI * 2)
       g.fill()
       g.shadowBlur = 0
-      g.fillStyle = '#05070f'
+      if (isChar) { // anneau : distingue les personnages (et rend visibles les badges sombres)
+        g.strokeStyle = 'rgba(234, 246, 255, 0.75)'
+        g.lineWidth = r * 0.1
+        g.stroke()
+      }
+      g.fillStyle = isLight(color) ? '#05070f' : '#eaf6ff'
       g.font = `600 ${Math.round(r * 0.6)}px system-ui`
       g.textAlign = 'center'
       g.textBaseline = 'middle'
-      g.fillText(t.label, t.x, t.y)
+      g.fillText(label, t.x, t.y)
+      g.globalAlpha = 1
     })
 
     document.getElementById('zoom-label').textContent = `${Math.round(c.zoom * 100)} %`
@@ -168,7 +179,7 @@ export function setupBoard(ctx) {
     let hit = null
     const r = gridSize() * 0.4
     tokens.forEach((t, id) => {
-      if (tokenScene(t) === sceneId() && Math.hypot(t.x - world.x, t.y - world.y) <= r) hit = id
+      if (visible(t) && Math.hypot(t.x - world.x, t.y - world.y) <= r) hit = id
     })
     return hit
   }
@@ -241,11 +252,41 @@ export function setupBoard(ctx) {
   })
 
   // ---------- Pions ----------
+  const snap = (v) => Math.floor(v / gridSize()) * gridSize() + gridSize() / 2
+
+  /** Jeton lié à un personnage : nom et couleur de badge lus en direct sur la fiche. */
+  function look(t) {
+    const c = t.charId && characters.get(t.charId)
+    if (!c) return { label: t.label, color: t.color, hidden: false, isChar: false }
+    const initials = c.get('name').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+    return { label: initials, color: BADGES.find((b) => b.name === c.get('badge'))?.color ?? '#9aa4b5', hidden: !!c.get('hidden'), isChar: true }
+  }
+  const visible = (t) => tokenScene(t) === sceneId() && (ctx.me().isGM || !look(t).hidden)
+
+  /** MJ : place le jeton d'un personnage ; s'il existe déjà (sur n'importe quelle scène), il est déplacé ici. */
+  function placeCharacter(charId, world) {
+    const c = characters.get(charId)
+    if (!c) return
+    const existing = [...tokens.entries()].find(([, t]) => t.charId === charId)
+    const pos = { x: snap(world.x), y: snap(world.y), scene: sceneId() }
+    if (existing) tokens.set(existing[0], { ...existing[1], ...pos })
+    else tokens.set(crypto.randomUUID(), { ...pos, charId, label: look({ charId }).label, color: look({ charId }).color })
+  }
+
+  canvas.addEventListener('dragover', (e) => {
+    if (ctx.me().isGM && e.dataTransfer.types.includes(CHARACTER_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }
+  })
+  canvas.addEventListener('drop', (e) => {
+    const id = e.dataTransfer.getData(CHARACTER_MIME)
+    if (!id || !ctx.me().isGM) return
+    e.preventDefault()
+    const { sx, sy } = pointer(e)
+    placeCharacter(id, toWorld(sx, sy))
+  })
+
   function addToken(label) {
     const { width, height } = view()
     const center = toWorld(width / 2, height / 2)
-    const step = gridSize()
-    const snap = (v) => Math.floor(v / step) * step + step / 2
     tokens.set(crypto.randomUUID(), {
       x: snap(center.x), y: snap(center.y),
       color: COLORS[tokens.size % COLORS.length],
@@ -363,6 +404,7 @@ export function setupBoard(ctx) {
   board.observe(onSceneChange)
   images.observe(draw)
   tokens.observe(draw)
+  characters.observeDeep(draw) // nom, badge ou visibilité d'un personnage
 
   addEventListener('resize', resize)
   document.getElementById('btn-fit').addEventListener('click', fit)
@@ -374,7 +416,7 @@ export function setupBoard(ctx) {
 
   return {
     addToken,
-    rerender: renderBar,
+    rerender() { renderBar(); draw() },
     /** Données à exporter (images encodées en base64 dans le JSON). */
     exportData() {
       const imgs = {}
@@ -404,4 +446,10 @@ function toBase64(bytes) {
 }
 function fromBase64(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+}
+
+/** Couleur claire ? (pour choisir un texte sombre ou clair sur le jeton) */
+function isLight(hex) {
+  const n = Number.parseInt(String(hex).replace('#', ''), 16)
+  return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) > 140
 }
