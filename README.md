@@ -10,10 +10,10 @@ npm run dev
 Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de salle) pour voir la synchronisation.
 
 ## Utilisation
-- **Onglets Vaisseau / Carte** (en haut) : chacun choisit sa vue. « Vaisseau » = plan du Gaïa (en préparation, sans gestion de fond) ; « Carte » = scènes et cartes importées par le MJ. Chaque vue a ses propres jetons.
+- **Onglets Vaisseau / Carte** (en haut) : chacun choisit sa vue. « Vaisseau » = plan du Gaïa, étage par étage (survoler une pièce affiche son nom) ; « Carte » = scènes et cartes importées par le MJ. Chaque vue a ses propres jetons.
 - **Plateau** : glisser dans le vide (ou clic milieu) pour déplacer la vue, molette pour zoomer, « Recadrer » pour voir toute la carte. Chacun cadre comme il veut.
 - **Scènes** (MJ, en haut du plateau) : créer une scène, lui donner une image de fond (partagée automatiquement), régler la taille des jetons. La scène choisie par le MJ s'affiche chez tout le monde.
-- **Plans du Gaïa** : `npm run plan-vaisseau` génère `references/plans/gaia-etage-*.svg` depuis l'Excel de gestion ; les mettre en image de fond d'une scène (régler « Jetons » vers 40 pour des jetons à la taille des cases du plan). Le plan est redessiné en vectoriel (coque lissée, murs continus, symboles de portes et caméras).
+- **Plan du Gaïa** : généré depuis la feuille « Map » de l'Excel de gestion avec `npm run plan-vaisseau` (à relancer si le plan change dans l'Excel).
 - **+ Pion** : ajoute un pion au centre de la vue, sur la scène affichée. Glisser pour déplacer. Double-clic pour le supprimer.
 - **Nom / rôle** (en haut) : cliquer sur le nom pour le changer ; choisir **MJ** ou **Joueur**.
 - **Équipage** (à gauche) : cliquer sur un personnage pour ouvrir sa fiche. Les scores se calculent seuls ; cliquer sur un score lance le dé (1d20 caractéristique, 1d100 compétence).

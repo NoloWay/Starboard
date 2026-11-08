@@ -1,49 +1,24 @@
-// Convertit la feuille « Map » de l'Excel de gestion (plan dessiné en cases colorées, faute de mieux
-// dans Google Sheets) en un plan vectoriel net, une image SVG par étage, avec la légende des salles.
-//   - coque et moteurs : contours tracés puis simplifiés (les « escaliers » de cases deviennent des diagonales)
-//   - murs, portes, accès techniques : traits continus fusionnés, symboles dédiés
-//   - caméras : icônes ; numéros de salles : pastilles
-// Usage : npm run plan-vaisseau → references/plans/gaia-etage-N.svg
-// Puis, dans le site (MJ) : « + Scène », « Image de fond », choisir le SVG, « Jetons » = CELL.
+// Génère le plan du Gaïa (onglet Vaisseau) depuis la feuille « Map » de l'Excel de gestion.
+// Usage : npm run plan-vaisseau → src/data/gaia-plan.json (dessiné par src/shipMap.js)
+//
+// Dans l'Excel, chaque case d'une pièce porte une formule de surbrillance qui cite la pièce :
+//   =IF($A$1="0_12 Passerelle du réacteur"," ","")  → étage 0, code 12, nom « Passerelle du réacteur »
+// On s'en sert pour savoir exactement quelles cases forment chaque pièce (les couleurs de fond
+// varient d'une case à l'autre et ne sont pas fiables). Les cases grises hors pièce = structure de la coque.
+// Les contours en escalier sont lissés : marches → diagonales, puis angles arrondis (courbes).
 import ExcelJS from 'exceljs'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { writeFileSync, mkdirSync } from 'node:fs'
 
 const SRC = new URL('../references/Excel de gestion du RP.xlsx', import.meta.url)
-const OUT = new URL('../references/plans/', import.meta.url)
-const CELL = 40 // pixels par case de l'Excel (= taille de case à régler dans la scène)
-const LEGEND_W = 520
-const SIMPLIFY = 1.05 // tolérance de lissage des contours, en cases
+const OUT = new URL('../src/data/gaia-plan.json', import.meta.url)
+const CELL = 40 // pixels « monde » par case de l'Excel
+const RED = 'FFFF0000' // bordures : portes
+const YELLOW = 'FFFFFF00' // bordures : accès techniques
+const ENGINE = 'FF6D9EEB' // remplissage : propulseurs
+const CAMERA = 'FFFF9900' // remplissage : caméras
 
-const C = {
-  bg: '#05070f',
-  floor: '#131c36',
-  hull: '#38e8ff',
-  wall: '#38e8ff',
-  door: '#ff4d5e',
-  access: '#ffd84a',
-  camera: '#ff8a2a',
-  engine: '#3f7bff',
-  obstacle: '#0a0f20',
-  obstacleLine: '#2a3a66',
-  label: '#ff3dd8',
-  text: '#cfe6ff',
-}
-// Remplissages Excel
-const FILL = { FFCCCCCC: 'floor', FFFF9900: 'cam', FF6D9EEB: 'engine', FF000000: 'black' }
-// Bordures Excel → type de trait (les fines bordures grises = quadrillage, ignorées)
-const BORDER = {
-  FF000000: { type: 'wall', color: C.wall, prio: 1 },
-  FFFF0000: { type: 'door', color: C.door, prio: 4 },
-  FFFFFF00: { type: 'access', color: C.access, prio: 3 },
-  FF00FFFF: { type: 'deco', color: '#4dffa6', prio: 2 },
-  FF76A5AF: { type: 'deco', color: '#76a5af', prio: 2 },
-  FF6D9EEB: { type: 'deco', color: '#5b8cff', prio: 2 },
-  FFB7B7B7: { type: 'deco', color: '#9aa4b5', prio: 2 },
-}
-
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const key = (r, c) => `${r},${c}`
-const n = (v) => Math.round(v * 100) / 100 // nombres courts dans le SVG
+const n = (v) => Math.round(v * 10) / 10
 
 function cellText(cell) {
   const v = cell.value
@@ -54,9 +29,9 @@ function cellText(cell) {
 
 // ---------- Géométrie ----------
 
-/** Contours (boucles de points [x, y] en unités de case) d'un ensemble de cases. */
+/** Contours (boucles de coins [x, y] en unités de case) d'un ensemble de cases "r,c". */
 function contours(mask) {
-  const edges = new Map() // "x,y" de départ → liste d'arêtes
+  const edges = new Map()
   const add = (x1, y1, x2, y2) => {
     const k = `${x1},${y1}`
     if (!edges.has(k)) edges.set(k, [])
@@ -86,363 +61,273 @@ function contours(mask) {
   return loops
 }
 
-function distToSegment([px, py], [ax, ay], [bx, by]) {
-  const dx = bx - ax
-  const dy = by - ay
-  const len = dx * dx + dy * dy
-  const t = len ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len)) : 0
-  return Math.hypot(px - ax - t * dx, py - ay - t * dy)
-}
+const len = (a, b) => Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1])
+const cross = (a, p, b) => (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0])
 
-/** Douglas-Peucker sur une polyligne ouverte. */
-function dp(points, tol) {
-  if (points.length < 3) return points
-  let max = 0
-  let idx = 0
-  for (let i = 1; i < points.length - 1; i++) {
-    const d = distToSegment(points[i], points[0], points.at(-1))
-    if (d > max) { max = d; idx = i }
-  }
-  if (max <= tol) return [points[0], points.at(-1)]
-  return [...dp(points.slice(0, idx + 1), tol).slice(0, -1), ...dp(points.slice(idx), tol)]
-}
-
-/** Simplifie une boucle fermée : coupée en deux au point le plus éloigné du premier. */
-function simplifyLoop(loop, tol) {
-  let far = 0
-  let max = 0
-  loop.forEach((p, i) => {
-    const d = Math.hypot(p[0] - loop[0][0], p[1] - loop[0][1])
-    if (d > max) { max = d; far = i }
-  })
-  const a = dp(loop.slice(0, far + 1), tol)
-  const b = dp([...loop.slice(far), loop[0]], tol)
-  return [...a.slice(0, -1), ...b.slice(0, -1)]
+/** Boucle fermée : retire les points alignés. */
+function simplifyLoop(loop) {
+  return loop.filter((p, i) => cross(loop.at(i - 1), p, loop[(i + 1) % loop.length]) !== 0)
 }
 
 /**
- * Chaîne des arêtes unitaires ([x1, y1, x2, y2]) en polylignes, coupées aux jonctions,
- * pour pouvoir lisser les murs en diagonale (escaliers de cases).
+ * Boucle fermée : les escaliers (≥ 3 marches d'une case, virages alternés) deviennent une diagonale.
+ * Les vrais angles des pièces sont conservés.
  */
-function polylines(unitEdges) {
-  const adj = new Map()
-  const pk = (x, y) => `${x},${y}`
-  unitEdges.forEach((e, i) => {
-    for (const p of [pk(e[0], e[1]), pk(e[2], e[3])]) {
-      if (!adj.has(p)) adj.set(p, [])
-      adj.get(p).push(i)
-    }
-  })
-  const used = new Set()
-  const other = (i, p) => {
-    const e = unitEdges[i]
-    return pk(e[0], e[1]) === p ? pk(e[2], e[3]) : pk(e[0], e[1])
+function destairLoop(loop) {
+  const pts = simplifyLoop(loop)
+  // On démarre sur un point qui suit un long segment, pour ne pas couper un escalier en deux
+  const start = pts.findIndex((p, i) => len(pts.at(i - 1), p) > 1)
+  if (start < 0) return pts
+  const P = [...pts.slice(start), ...pts.slice(0, start)]
+  const m = P.length
+  const at = (i) => P[i % m]
+  const turn = (i) => Math.sign(cross(at(i - 1 + m), at(i), at(i + 1)))
+  const out = []
+  let i = 0
+  while (i < m) {
+    out.push(at(i))
+    let j = i
+    while (j - i < m && len(at(j), at(j + 1)) === 1 && (j === i || turn(j) === -turn(j - 1 + m))) j++
+    i = j - i >= 3 ? j : i + 1
   }
-  const walk = (startP, firstEdge) => {
-    const pts = [startP]
-    let p = startP
-    let i = firstEdge
-    while (i != null && !used.has(i)) {
-      used.add(i)
-      p = other(i, p)
-      pts.push(p)
-      const next = adj.get(p)
-      i = next.length === 2 ? next.find((j) => !used.has(j)) : null // on s'arrête aux jonctions
-    }
-    return pts.map((s) => s.split(',').map(Number))
+  return out
+}
+
+/** Chemin SVG d'une boucle aux angles arrondis (rayon en cases, plafonné par les segments). */
+function roundedPath(loop, radius, ox, oy) {
+  const P = loop.map(([x, y]) => [(x - ox) * CELL, (y - oy) * CELL])
+  const m = P.length
+  const R = radius * CELL
+  const toward = (a, b, d) => {
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+    return [a[0] + ((b[0] - a[0]) * d) / l, a[1] + ((b[1] - a[1]) * d) / l]
+  }
+  let d = ''
+  for (let i = 0; i < m; i++) {
+    const prev = P[(i - 1 + m) % m]
+    const p = P[i]
+    const next = P[(i + 1) % m]
+    const r = Math.min(R, Math.hypot(p[0] - prev[0], p[1] - prev[1]) / 2, Math.hypot(next[0] - p[0], next[1] - p[1]) / 2)
+    const a = toward(p, prev, r)
+    const b = toward(p, next, r)
+    d += `${i ? 'L' : 'M'}${n(a[0])},${n(a[1])}Q${n(p[0])},${n(p[1])},${n(b[0])},${n(b[1])}`
+  }
+  return `${d}Z`
+}
+
+/** Arêtes unitaires alignées → segments fusionnés [x1, y1, x2, y2] (unités de case). */
+function mergeEdges(list) {
+  const groups = new Map()
+  for (const [o, line, pos] of list) {
+    const g = `${o}|${line}`
+    if (!groups.has(g)) groups.set(g, [])
+    groups.get(g).push(pos)
   }
   const out = []
-  // D'abord depuis les extrémités et jonctions, puis les boucles restantes
-  for (const [p, list] of adj) if (list.length !== 2) for (const i of list) if (!used.has(i)) out.push(walk(p, i))
-  for (const [p, list] of adj) for (const i of list) if (!used.has(i)) out.push(walk(p, i))
-  return out
-}
-
-/**
- * Remplace les « escaliers » (au moins 3 marches d'une case qui tournent alternativement à gauche et à droite)
- * par une diagonale, sans toucher aux vrais angles des pièces.
- */
-function destair(points) {
-  // Retire les points alignés
-  const pts = points.filter((p, i) => {
-    if (i === 0 || i === points.length - 1) return true
-    const [a, b] = [points[i - 1], points[i + 1]]
-    return (p[0] - a[0]) * (b[1] - p[1]) !== (p[1] - a[1]) * (b[0] - p[0])
-  })
-  const len = (i) => Math.abs(pts[i + 1][0] - pts[i][0]) + Math.abs(pts[i + 1][1] - pts[i][1])
-  const turn = (i) => { // signe du virage au point i
-    const [a, p, b] = [pts[i - 1], pts[i], pts[i + 1]]
-    return Math.sign((p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]))
-  }
-  const out = [pts[0]]
-  let i = 0
-  while (i < pts.length - 1) {
-    // Segments i … j-1 : marches d'une case, virages alternés gauche / droite
-    let j = i + 1
-    if (len(i) === 1) {
-      while (j < pts.length - 1 && len(j) === 1 && (j === i + 1 || turn(j) === -turn(j - 1))) j++
+  for (const [g, positions] of groups) {
+    const [o, line] = g.split('|')
+    positions.sort((a, b) => a - b)
+    let s = positions[0]
+    let prev = s
+    for (const p of [...positions.slice(1), Infinity]) {
+      if (p === prev + 1) { prev = p; continue }
+      out.push(o === 'h' ? [s, Number(line), prev + 1, Number(line)] : [Number(line), s, Number(line), prev + 1])
+      s = p
+      prev = p
     }
-    if (j - i >= 3) { out.push(pts[j]); i = j } else { out.push(pts[i + 1]); i++ }
   }
   return out
 }
 
-const toPath = (loops, ox, oy) => loops
-  .map((l) => `M${l.map(([x, y]) => `${n((x - ox) * CELL)},${n((y - oy) * CELL)}`).join('L')}Z`)
-  .join('')
+// ---------- Types de pièces ----------
 
-// ---------- Lecture du classeur ----------
+function classify(code, name) {
+  if (/^el\d/.test(code)) return { type: 'electric', label: `Gaine électrique ${code.toUpperCase()}` }
+  if (/^v\d/.test(code)) return { type: 'ventilation', label: `Ventilation ${code.toUpperCase()}` }
+  if (/^m\d/.test(code)) return { type: 'maintenance', label: `Conduit technique ${code.toUpperCase()}` }
+  if (/^[a-z]\d/.test(code)) return { type: 'corridor', label: `Couloir ${code.toUpperCase()}` }
+  return { type: 'room', label: name }
+}
+
+// ---------- Lecture ----------
 
 const wb = new ExcelJS.Workbook()
 await wb.xlsx.readFile(SRC)
 const ws = wb.getWorksheet('Map')
+const lastCol = ws.columnCount
 
-// Étages repérés grâce aux titres « Etage N » en colonne A
 const decks = []
 ws.eachRow((row, r) => {
   const m = /^Etage (-?\d+)$/.exec(cellText(row.getCell(1)))
   if (m && !decks.some((d) => d.name === m[1])) decks.push({ name: m[1], from: r })
 })
 decks.forEach((d, i) => { d.to = (decks[i + 1]?.from ?? ws.rowCount + 1) - 1 })
-const lastCol = ws.columnCount
 
-mkdirSync(OUT, { recursive: true })
+const plan = { cell: CELL, decks: [] }
 
 for (const deck of decks) {
-  const kind = new Map() // "r,c" → floor | cam | engine | black
-  const edges = new Map() // arête de case → { type, color, prio, width }
-  const labels = []
-  const rooms = new Map()
+  const fill = new Map() // "r,c" → argb
+  const roomOf = new Map() // "r,c" → identifiant de pièce
+  const rooms = new Map() // identifiant → { code, name, cells:Set }
+  const doorEdges = []
+  const accessEdges = []
 
   for (let r = deck.from; r <= deck.to; r++) {
     for (let c = 2; c <= lastCol; c++) {
       const cell = ws.getCell(r, c)
+      const k = key(r, c)
       const argb = cell.fill?.type === 'pattern' && cell.fill.pattern !== 'none' ? cell.fill.fgColor?.argb : null
-      if (FILL[argb]) kind.set(key(r, c), FILL[argb])
-      // Arêtes « canoniques » : h,r,c = trait horizontal en haut de la case (r, c) ; v,r,c = trait vertical à gauche
-      const sides = { top: `h,${r},${c}`, bottom: `h,${r + 1},${c}`, left: `v,${r},${c}`, right: `v,${r},${c + 1}` }
-      for (const [side, ek] of Object.entries(sides)) {
-        const b = cell.border?.[side]
-        const def = BORDER[b?.color?.argb]
-        if (!b?.style || !def) continue
-        const width = { thin: 0.08, medium: 0.11, thick: 0.15 }[b.style] ?? 0.1
-        if ((edges.get(ek)?.prio ?? 0) < def.prio) edges.set(ek, { ...def, width })
+      if (argb) fill.set(k, argb)
+      // Cases fusionnées (souvent celles du numéro de pièce) : seule la case principale porte la formule
+      const source = cell.isMerged ? cell.master : cell
+      const m = /\$A\$1="(-?\d+)_([^\s"]+)\s*([^"]*)"/.exec(source.formula ?? '')
+      if (m && m[1] === deck.name) {
+        const id = `${m[2]}|${m[3].trim()}`
+        roomOf.set(k, id)
+        if (!rooms.has(id)) rooms.set(id, { code: m[2], name: m[3].trim(), cells: new Set() })
+        rooms.get(id).cells.add(k)
       }
-      const text = cellText(cell)
-      if (text && !cell.isMerged) labels.push({ r, c, text })
-      const f = cell.value?.formula ?? ''
-      for (const m of f.matchAll(/\$A\$1="(-?\d+)_([^\s"]+)\s*([^"]*)"/g)) {
-        if (m[1] === deck.name && !rooms.has(m[2])) rooms.set(m[2], m[3].trim())
+      for (const [side, ek] of [['top', ['h', r, c]], ['bottom', ['h', r + 1, c]], ['left', ['v', c, r]], ['right', ['v', c + 1, r]]]) {
+        const argbB = cell.border?.[side]?.color?.argb
+        if (!cell.border?.[side]?.style) continue
+        if (argbB === RED) doorEdges.push(ek)
+        if (argbB === YELLOW) accessEdges.push(ek)
       }
     }
   }
 
-  // Les cases noires ou sans couleur reliées au bord du dessin = le vide spatial ;
-  // celles enfermées dans la coque = équipements / zones pleines
+  // Pièce entièrement enfermée dans une autre (erreur de code dans l'Excel, ex. « 1_4 » au milieu de « 1_1 ») : fusionnée
+  for (const [id, room] of rooms) {
+    const around = new Set()
+    for (const k of room.cells) {
+      const [r, c] = k.split(',').map(Number)
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nk = key(r + a, c + b)
+        if (!room.cells.has(nk)) around.add(roomOf.get(nk) ?? 'none')
+      }
+    }
+    const [host] = around
+    if (around.size === 1 && host !== 'none' && rooms.has(host)) {
+      room.cells.forEach((k) => { rooms.get(host).cells.add(k); roomOf.set(k, host) })
+      rooms.delete(id)
+    }
+  }
+
+  // Vide spatial = cases noires ou sans couleur reliées au bord ; le reste = vaisseau
   const space = new Set()
-  const queue = []
-  const passable = (r, c) => {
-    const k = kind.get(key(r, c))
-    return !k || k === 'black'
-  }
-  for (let r = deck.from - 1; r <= deck.to + 1; r++) {
-    for (let c = 1; c <= lastCol + 1; c++) {
-      if (r === deck.from - 1 || r === deck.to + 1 || c === 1 || c === lastCol + 1) { space.add(key(r, c)); queue.push([r, c]) }
-    }
-  }
-  while (queue.length) {
-    const [r, c] = queue.pop()
-    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const rr = r + dr
-      const cc = c + dc
-      if (rr < deck.from || rr > deck.to || cc < 2 || cc > lastCol) continue
+  const stack = []
+  const isVoid = (k) => !roomOf.has(k) && (!fill.has(k) || fill.get(k) === 'FF000000')
+  for (let r = deck.from; r <= deck.to; r++) for (const c of [2, lastCol]) if (isVoid(key(r, c))) { space.add(key(r, c)); stack.push([r, c]) }
+  for (let c = 2; c <= lastCol; c++) for (const r of [deck.from, deck.to]) if (isVoid(key(r, c))) { space.add(key(r, c)); stack.push([r, c]) }
+  while (stack.length) {
+    const [r, c] = stack.pop()
+    for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const rr = r + a
+      const cc = c + b
       const k = key(rr, cc)
-      if (space.has(k) || !passable(rr, cc)) continue
+      if (rr < deck.from || rr > deck.to || cc < 2 || cc > lastCol || space.has(k) || !isVoid(k)) continue
       space.add(k)
-      queue.push([rr, cc])
+      stack.push([rr, cc])
     }
   }
-
+  const engines = new Set()
   const hull = new Set()
-  const engine = new Set()
-  const obstacles = new Set()
-  const cameras = []
   for (let r = deck.from; r <= deck.to; r++) {
     for (let c = 2; c <= lastCol; c++) {
       const k = key(r, c)
-      const t = kind.get(k)
-      if (t === 'engine') engine.add(k)
-      else if (t === 'floor' || t === 'cam') hull.add(k)
-      else if (!space.has(k)) { hull.add(k); obstacles.add(k) } // case vide ou noire enfermée dans la coque
-      if (t === 'cam') cameras.push({ r, c })
+      if (space.has(k)) continue
+      if (fill.get(k) === ENGINE && !roomOf.has(k)) engines.add(k)
+      else hull.add(k)
     }
   }
   if (!hull.size) continue
 
-  const all = [...hull, ...engine].map((k) => k.split(',').map(Number))
+  // Îlots de cases sans pièce enfermés dans une seule pièce (fonds différents dans l'Excel) : rattachés à cette pièce
+  const seen = new Set()
+  for (const start of hull) {
+    if (roomOf.has(start) || seen.has(start)) continue
+    const island = []
+    const hosts = new Set()
+    const todo = [start]
+    seen.add(start)
+    while (todo.length) {
+      const k = todo.pop()
+      island.push(k)
+      const [r, c] = k.split(',').map(Number)
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nk = key(r + a, c + b)
+        if (roomOf.has(nk)) hosts.add(roomOf.get(nk))
+        else if (!hull.has(nk)) hosts.add('outside')
+        else if (!seen.has(nk)) { seen.add(nk); todo.push(nk) }
+      }
+    }
+    const [host] = hosts
+    if (hosts.size === 1 && host !== 'outside') island.forEach((k) => { roomOf.set(k, host); rooms.get(host).cells.add(k) })
+  }
+
+  // Portes / accès : seulement ceux qui bordent au moins une pièce (certaines bordures traînent dans la structure)
+  const touchesRoom = ([o, line, pos]) => (o === 'h'
+    ? roomOf.has(key(line - 1, pos)) || roomOf.has(key(line, pos))
+    : roomOf.has(key(pos, line - 1)) || roomOf.has(key(pos, line)))
+  doorEdges.splice(0, Infinity, ...doorEdges.filter(touchesRoom))
+  accessEdges.splice(0, Infinity, ...accessEdges.filter(touchesRoom))
+
+  const all = [...hull, ...engines].map((k) => k.split(',').map(Number))
   const minR = Math.min(...all.map(([r]) => r)) - 1
-  const maxR = Math.max(...all.map(([r]) => r)) + 1
   const minC = Math.min(...all.map(([, c]) => c)) - 1
-  const maxC = Math.max(...all.map(([, c]) => c)) + 1
-  const mapW = (maxC - minC + 1) * CELL
-  const mapH = (maxR - minR + 1) * CELL
+  const maxR = Math.max(...all.map(([r]) => r)) + 2
+  const maxC = Math.max(...all.map(([, c]) => c)) + 2
   const X = (c) => n((c - minC) * CELL)
   const Y = (r) => n((r - minR) * CELL)
+  const shape = (mask, radius) => contours(mask).map((l) => roundedPath(destairLoop(l), radius, minC, minR)).join('')
 
-  const hullLoops = contours(hull).map((l) => simplifyLoop(l, SIMPLIFY))
-  const engineLoops = contours(engine).map((l) => simplifyLoop(l, SIMPLIFY))
+  const out = {
+    name: deck.name,
+    width: (maxC - minC) * CELL,
+    height: (maxR - minR) * CELL,
+    hull: shape(hull, 0.9),
+    engines: shape(engines, 0.6),
+    rooms: [],
+    doors: mergeEdges(doorEdges).map(([x1, y1, x2, y2]) => [X(x1), Y(y1), X(x2), Y(y2)]),
+    access: mergeEdges(accessEdges).map(([x1, y1, x2, y2]) => [X(x1), Y(y1), X(x2), Y(y2)]),
+    cameras: [...fill].filter(([k, a]) => a === CAMERA && hull.has(k)).map(([k]) => { const [r, c] = k.split(',').map(Number); return [X(c + 0.5), Y(r + 0.5)] }),
+  }
 
-  // Traits : on ignore les murs posés sur le bord de la coque (le contour lissé les remplace)
-  const inShip = (r, c) => hull.has(key(r, c)) || engine.has(key(r, c))
-  const segments = new Map() // portes et accès : groupe → positions alignées
-  const strokes = new Map() // murs et décors : groupe → arêtes unitaires (lissées ensuite)
-  for (const [ek, e] of edges) {
-    const [o, r, c] = ek.split(',')
-    const R = Number(r)
-    const Cc = Number(c)
-    const cells = o === 'h' ? [[R - 1, Cc], [R, Cc]] : [[R, Cc - 1], [R, Cc]]
-    const [a, b] = cells.map(([rr, cc]) => inShip(rr, cc))
-    if (!a && !b) continue
-    if (e.type === 'wall' && a !== b) continue
-    if (cells.every(([rr, cc]) => engine.has(key(rr, cc)))) continue // quadrillage des moteurs
-    if (e.type === 'wall' || e.type === 'deco') {
-      const group = `${e.type}|${e.color}|${e.width}`
-      if (!strokes.has(group)) strokes.set(group, [])
-      strokes.get(group).push(o === 'h' ? [Cc, R, Cc + 1, R] : [Cc, R, Cc, R + 1])
-      continue
+  for (const room of rooms.values()) {
+    const cells = [...room.cells].map((k) => k.split(',').map(Number))
+    const { type, label } = classify(room.code, room.name)
+    // Emplacement du titre : la plus large rangée parmi les deux du haut
+    const top = Math.min(...cells.map(([r]) => r))
+    let best = null
+    for (const row of [top, top + 1]) {
+      const cols = cells.filter(([r]) => r === row).map(([, c]) => c).sort((a, b) => a - b)
+      let s = cols[0]
+      for (let i = 1; i <= cols.length; i++) {
+        if (i < cols.length && cols[i] === cols[i - 1] + 1) continue
+        const w = cols[i - 1] - s + 1
+        if (!best || w > best.w) best = { row, s, w }
+        s = cols[i]
+      }
     }
-    const group = `${o}|${o === 'h' ? R : Cc}|${e.type}|${e.color}|${e.width}`
-    if (!segments.has(group)) segments.set(group, [])
-    segments.get(group).push(o === 'h' ? Cc : R)
+    const cx = cells.reduce((a, [, c]) => a + c + 0.5, 0) / cells.length
+    const cy = cells.reduce((a, [r]) => a + r + 0.5, 0) / cells.length
+    out.rooms.push({
+      code: room.code,
+      name: room.name,
+      label,
+      type,
+      size: cells.length,
+      d: shape(room.cells, 0.3),
+      title: { x: X(best.s + best.w / 2), y: Y(best.row + 0.5), w: n(best.w * CELL) },
+      center: { x: X(cx), y: Y(cy) },
+      rows: Math.max(...cells.map(([r]) => r)) - top + 1,
+    })
   }
-  const lines = []
-  for (const [group, positions] of segments) {
-    const [o, line, type, color, width] = group.split('|')
-    positions.sort((p, q) => p - q)
-    let start = positions[0]
-    let prev = start
-    for (const p of [...positions.slice(1), Infinity]) {
-      if (p === prev + 1) { prev = p; continue }
-      lines.push({ o, line: Number(line), from: start, to: prev + 1, type, color, width: Number(width) })
-      start = p
-      prev = p
-    }
-  }
-
-  // Obstacles : cases fusionnées en rectangles (lignes puis colonnes)
-  const runs = []
-  for (let r = minR; r <= maxR; r++) {
-    let run = null
-    for (let c = minC; c <= maxC + 1; c++) {
-      if (obstacles.has(key(r, c))) {
-        if (run) run.w++
-        else { run = { r, c, w: 1, h: 1 }; runs.push(run) }
-      } else run = null
-    }
-  }
-  const rects = []
-  for (const run of runs) {
-    const above = rects.find((x) => x.c === run.c && x.w === run.w && x.r + x.h === run.r)
-    if (above) above.h++
-    else rects.push({ ...run })
-  }
-
-  // ---------- Dessin ----------
-  const lineXY = (l, inset = 0) => (l.o === 'h'
-    ? [X(l.from + inset), Y(l.line), X(l.to - inset), Y(l.line)]
-    : [X(l.line), Y(l.from + inset), X(l.line), Y(l.to - inset)])
-
-  const draw = []
-  draw.push(`<path d="${toPath(engineLoops, minC, minR)}" fill="url(#engine)" stroke="${C.engine}" stroke-width="${n(CELL * 0.08)}" stroke-linejoin="round" filter="url(#glow)"/>`)
-  draw.push(`<path d="${toPath(hullLoops, minC, minR)}" fill="${C.floor}" fill-rule="evenodd"/>`)
-  draw.push(`<path d="${toPath(hullLoops, minC, minR)}" fill="none" stroke="${C.hull}" stroke-width="${n(CELL * 0.16)}" stroke-linejoin="round" filter="url(#glow)"/>`)
-  draw.push(...rects.map((x) => `<rect x="${n(X(x.c) + CELL * 0.1)}" y="${n(Y(x.r) + CELL * 0.1)}" width="${n(x.w * CELL - CELL * 0.2)}" height="${n(x.h * CELL - CELL * 0.2)}" rx="${n(CELL * 0.12)}" fill="${C.obstacle}" stroke="${C.obstacleLine}" stroke-width="${n(CELL * 0.05)}"/>`))
-
-  // Murs et décors : polylignes lissées (les marches d'une case deviennent des diagonales)
-  draw.push(`<g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-soft)">`)
-  let strokeCount = 0
-  for (const [group, unitEdges] of strokes) {
-    const [, color, width] = group.split('|')
-    const d = polylines(unitEdges)
-      .map(destair)
-      .map((pl) => `M${pl.map(([x, y]) => `${X(x)},${Y(y)}`).join('L')}`)
-      .join('')
-    strokeCount += unitEdges.length
-    draw.push(`<path d="${d}" stroke="${color}" stroke-width="${n(CELL * Number(width))}"/>`)
-  }
-  draw.push(`</g>`)
-  for (const l of lines.filter((x) => x.type === 'access')) {
-    const [x1, y1, x2, y2] = lineXY(l, 0.1)
-    draw.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${C.bg}" stroke-width="${n(CELL * 0.22)}"/>`)
-    draw.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${C.access}" stroke-width="${n(CELL * 0.12)}" stroke-dasharray="${n(CELL * 0.18)} ${n(CELL * 0.12)}"/>`)
-  }
-  // Portes : ouverture dans le mur, battant rouge et montants cyan (un seul filtre de lueur pour toutes)
-  const doors = lines.filter((x) => x.type === 'door').map((l) => {
-    const [x1, y1, x2, y2] = lineXY(l, 0.08)
-    const j = CELL * 0.22
-    const jambs = l.o === 'h'
-      ? [[x1, y1 - j, x1, y1 + j], [x2, y2 - j, x2, y2 + j]]
-      : [[x1 - j, y1, x1 + j, y1], [x2 - j, y2, x2 + j, y2]]
-    return { x1, y1, x2, y2, jambs }
-  })
-  draw.push(...doors.map((d) => `<line x1="${d.x1}" y1="${d.y1}" x2="${d.x2}" y2="${d.y2}" stroke="${C.floor}" stroke-width="${n(CELL * 0.3)}"/>`))
-  draw.push(`<g filter="url(#glow-soft)" stroke-linecap="round">`,
-    ...doors.map((d) => `<line x1="${d.x1}" y1="${d.y1}" x2="${d.x2}" y2="${d.y2}" stroke="${C.door}" stroke-width="${n(CELL * 0.14)}"/>`),
-    ...doors.flatMap((d) => d.jambs.map(([a, b, c2, e]) => `<line x1="${n(a)}" y1="${n(b)}" x2="${n(c2)}" y2="${n(e)}" stroke="${C.wall}" stroke-width="${n(CELL * 0.1)}"/>`)),
-    ...cameras.map(({ r, c }) => {
-      const cx = X(c + 0.5)
-      const cy = Y(r + 0.5)
-      const s = CELL * 0.32
-      return `<path d="M${n(cx)},${n(cy)} L${n(cx + s * 1.5)},${n(cy - s)} L${n(cx + s * 1.5)},${n(cy + s)} Z" fill="${C.camera}" opacity="0.35"/><circle cx="${n(cx)}" cy="${n(cy)}" r="${n(s * 0.7)}" fill="${C.camera}"/><circle cx="${n(cx)}" cy="${n(cy)}" r="${n(s * 0.28)}" fill="${C.bg}"/>`
-    }),
-    `</g>`)
-  for (const l of labels.filter((x) => x.r >= minR && x.r <= maxR && x.c >= minC && x.c <= maxC)) {
-    const fs = CELL * 0.5
-    const w = Math.max(fs * 1.4, l.text.length * fs * 0.62 + fs * 0.7)
-    const cx = X(l.c + 0.5)
-    const cy = Y(l.r + 0.5)
-    draw.push(`<rect x="${n(cx - w / 2)}" y="${n(cy - fs * 0.75)}" width="${n(w)}" height="${n(fs * 1.5)}" rx="${n(fs * 0.75)}" fill="${C.bg}" stroke="${C.label}" stroke-width="${n(CELL * 0.04)}" opacity="0.92"/>`)
-    draw.push(`<text x="${n(cx)}" y="${n(cy)}" font-size="${n(fs)}" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${esc(l.text)}</text>`)
-  }
-
-  // ---------- Légende ----------
-  const legend = [...rooms.entries()].filter(([, name]) => name).sort(([a], [b]) => a.localeCompare(b, 'fr', { numeric: true }))
-  const lx = mapW + 40
-  const SYMBOLS = [
-    [`<line x1="${lx}" y1="-6" x2="${lx + 34}" y2="-6" stroke="${C.wall}" stroke-width="5" stroke-linecap="round"/>`, 'Murs'],
-    [`<line x1="${lx + 4}" y1="-6" x2="${lx + 30}" y2="-6" stroke="${C.door}" stroke-width="6" stroke-linecap="round"/><line x1="${lx + 2}" y1="-14" x2="${lx + 2}" y2="2" stroke="${C.wall}" stroke-width="4"/><line x1="${lx + 32}" y1="-14" x2="${lx + 32}" y2="2" stroke="${C.wall}" stroke-width="4"/>`, 'Portes'],
-    [`<line x1="${lx}" y1="-6" x2="${lx + 34}" y2="-6" stroke="${C.access}" stroke-width="5" stroke-dasharray="7 5"/>`, 'Accès techniques (électricité, ventilation)'],
-    [`<circle cx="${lx + 10}" cy="-6" r="8" fill="${C.camera}"/><circle cx="${lx + 10}" cy="-6" r="3" fill="${C.bg}"/><path d="M${lx + 10},-6 L${lx + 32},-18 L${lx + 32},6 Z" fill="${C.camera}" opacity="0.35"/>`, 'Caméras de surveillance'],
-    [`<rect x="${lx + 4}" y="-16" width="24" height="20" rx="4" fill="${C.obstacle}" stroke="${C.obstacleLine}" stroke-width="2"/>`, 'Équipements, piliers'],
-  ]
-  const lineH = 34
-  const roomsTop = 120 + SYMBOLS.length * lineH + 30
-  const width = mapW + LEGEND_W
-  const height = Math.max(mapH, roomsTop + legend.length * lineH + 20)
-
-  const svg = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="Segoe UI, sans-serif">`,
-    `<defs>`,
-    // Zone de filtre en coordonnées absolues : sinon un trait parfaitement vertical/horizontal (boîte de largeur nulle) disparaît
-    `<filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="${mapW}" height="${mapH}"><feGaussianBlur stdDeviation="${n(CELL * 0.18)}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`,
-    `<filter id="glow-soft" filterUnits="userSpaceOnUse" x="0" y="0" width="${mapW}" height="${mapH}"><feGaussianBlur stdDeviation="${n(CELL * 0.08)}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`,
-    `<radialGradient id="engine" cx="70%" cy="50%" r="80%"><stop offset="0" stop-color="#9fd8ff"/><stop offset="0.45" stop-color="${C.engine}"/><stop offset="1" stop-color="#14245c"/></radialGradient>`,
-    `<pattern id="dots" width="${CELL}" height="${CELL}" patternUnits="userSpaceOnUse"><circle cx="${CELL / 2}" cy="${CELL / 2}" r="1.2" fill="#1c2a4d"/></pattern>`,
-    `</defs>`,
-    `<rect width="${width}" height="${height}" fill="${C.bg}"/>`,
-    `<rect width="${mapW}" height="${mapH}" fill="url(#dots)"/>`,
-    ...draw,
-    `<g>`,
-    `<text x="${lx}" y="64" font-size="34" font-weight="700" fill="${C.hull}" letter-spacing="4">GAÏA · ÉTAGE ${esc(deck.name)}</text>`,
-    ...SYMBOLS.map(([icon, label], i) => `<g transform="translate(0 ${120 + i * lineH})">${icon}<text x="${lx + 50}" y="0" font-size="20" fill="${C.text}">${esc(label)}</text></g>`),
-    `<line x1="${lx}" y1="${roomsTop - 34}" x2="${width - 40}" y2="${roomsTop - 34}" stroke="#1c2a4d" stroke-width="2"/>`,
-    ...legend.map(([code, name], i) => `<text x="${lx}" y="${roomsTop + i * lineH}" font-size="21" fill="${C.text}"><tspan fill="${C.label}" font-weight="700">${esc(code)}</tspan>  ${esc(name)}</text>`),
-    `</g>`,
-    `</svg>`,
-  ].join('\n')
-
-  const file = `gaia-etage-${deck.name}.svg`
-  writeFileSync(new URL(file, OUT), svg)
-  console.log(`${file} : ${width}×${height} px, ${strokeCount} arêtes de murs, ${lines.length} portes/accès, ${rects.length} équipements, ${cameras.length} caméras, ${legend.length} salles`)
+  out.rooms.sort((a, b) => a.code.localeCompare(b.code, 'fr', { numeric: true }))
+  plan.decks.push(out)
+  console.log(`Étage ${deck.name} : ${out.rooms.length} pièces, ${out.doors.length} portes, ${out.access.length} accès, ${out.cameras.length} caméras`)
 }
-console.log(`Taille de case à régler dans la scène : ${CELL} px`)
+
+mkdirSync(new URL('../src/data/', import.meta.url), { recursive: true })
+writeFileSync(OUT, JSON.stringify(plan))
+console.log('→ src/data/gaia-plan.json')

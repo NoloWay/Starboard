@@ -1,6 +1,7 @@
 import { h } from './dom.js'
 import { BADGES } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
+import { CELL, DECKS, deckSize, drawDeck, roomAt } from './shipMap.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
 //
@@ -12,7 +13,7 @@ import { CHARACTER_MIME } from './sheets.js'
 // La caméra reste locale : chacun cadre comme il veut.
 
 const DEFAULT_SCENE = 'main'
-const SHIP_SCENE = 'ship' // scène réservée à l'onglet Vaisseau
+const SHIP_SCENE = 'ship' // préfixe des scènes de l'onglet Vaisseau (ship:1, ship:0, ship:-1)
 const MAX_IMAGE = 4096 // côté max après compression
 const ZOOM_MIN = 0.1
 const ZOOM_MAX = 4
@@ -57,15 +58,17 @@ export function setupBoard(ctx) {
   const bar = document.getElementById('scene-bar')
 
   // ---------- Vue (onglet, local à chaque joueur) et scène courante ----------
-  // « ship » : plan du vaisseau (scène fixe SHIP_SCENE, sans fond importé) ; « map » : scènes du MJ.
+  // « ship » : plan du Gaïa, un étage choisi localement (scène `ship:<étage>`) ; « map » : scènes du MJ.
   let mode = 'ship'
+  let deck = (() => { try { return localStorage.getItem('starboard:deck') } catch { return null } })()
+  if (!DECKS.includes(deck)) deck = '0'
   const mapScene = () => {
     const id = board.get('scene')
-    return scenes.has(id) && id !== SHIP_SCENE ? id : DEFAULT_SCENE
+    return scenes.has(id) && !String(id).startsWith(SHIP_SCENE) ? id : DEFAULT_SCENE
   }
-  const sceneId = () => (mode === 'ship' ? SHIP_SCENE : mapScene())
+  const sceneId = () => (mode === 'ship' ? `${SHIP_SCENE}:${deck}` : mapScene())
   const scene = () => (mode === 'ship'
-    ? { name: 'Vaisseau', grid: 40, image: null }
+    ? { name: `Étage ${deck}`, grid: CELL, image: 'plan', ...deckSize(deck) } // image : permet le cadrage
     : scenes.get(sceneId()) ?? { name: 'Plateau', grid: 50, image: null })
   const tokenScene = (t) => t.scene ?? DEFAULT_SCENE
   const tokenSize = () => Number(scene().grid) || 50
@@ -128,8 +131,9 @@ export function setupBoard(ctx) {
     g.clearRect(0, 0, width, height)
     g.setTransform(devicePixelRatio * c.zoom, 0, 0, devicePixelRatio * c.zoom, devicePixelRatio * c.x, devicePixelRatio * c.y)
 
-    const bmp = bitmap(s.image)
-    if (bmp) {
+    const bmp = mode === 'ship' ? null : bitmap(s.image)
+    if (mode === 'ship') drawDeck(g, deck, c.zoom)
+    else if (bmp) {
       g.imageSmoothingEnabled = c.zoom < 2 // plans en « pixel art » : net quand on zoome
       g.drawImage(bmp, 0, 0, s.width, s.height)
     }
@@ -159,15 +163,6 @@ export function setupBoard(ctx) {
       g.fillText(label, t.x, t.y)
       g.globalAlpha = 1
     })
-
-    // ponytail: vue Vaisseau vide pour l'instant, le plan spécial du Gaïa viendra ici
-    if (mode === 'ship') {
-      g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
-      g.fillStyle = '#6c85b3'
-      g.font = '14px "Segoe UI", system-ui'
-      g.textAlign = 'center'
-      g.fillText('Plan du vaisseau : en préparation', width / 2, 28)
-    }
 
     document.getElementById('zoom-label').textContent = `${Math.round(c.zoom * 100)} %`
   }
@@ -204,8 +199,16 @@ export function setupBoard(ctx) {
   })
 
   canvas.addEventListener('pointermove', (e) => {
-    if (!drag) return
     const { sx, sy } = pointer(e)
+    if (!drag) {
+      // Vue Vaisseau : nom de la pièce survolée en infobulle
+      if (mode === 'ship') {
+        const w = toWorld(sx, sy)
+        const room = roomAt(g, deck, w.x, w.y)
+        canvas.title = room ? (/^\d/.test(room.code) ? `${room.code} · ${room.label}` : room.label) : ''
+      }
+      return
+    }
     if (drag.kind === 'pan') {
       cam().x = drag.cx + sx - drag.sx
       cam().y = drag.cy + sy - drag.sy
@@ -353,10 +356,24 @@ export function setupBoard(ctx) {
 
   function renderBar() {
     bar.innerHTML = ''
-    if (mode === 'ship') return // vue Vaisseau : pas de gestion de scènes ni de fond
+    if (mode === 'ship') {
+      // Vue Vaisseau : choix de l'étage (local), pas de gestion de scènes ni de fond
+      bar.append(h('span', { class: 'scene-name' }, 'Gaïa'), h('div', { class: 'seg' }, DECKS.map((d) => h('button', {
+        class: d === deck ? 'on' : '',
+        onclick: () => {
+          deck = d
+          try { localStorage.setItem('starboard:deck', d) } catch { /* stockage indisponible */ }
+          lastScene = sceneId()
+          if (!cam().fitted) fit()
+          renderBar()
+          draw()
+        },
+      }, `Étage ${d.replace('-', '−')}`))))
+      return
+    }
     const s = scene()
     const isGM = ctx.me().isGM
-    const list = sortedScenes().filter(([id]) => id !== SHIP_SCENE)
+    const list = sortedScenes().filter(([id]) => !String(id).startsWith(SHIP_SCENE))
     bar.append(...[
       isGM && list.length
         ? h('select', { title: 'Scène affichée chez tout le monde', onchange: (e) => board.set('scene', e.target.value) },
