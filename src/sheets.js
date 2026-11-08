@@ -1,5 +1,5 @@
 import * as Y from 'yjs'
-import { h } from './dom.js'
+import { h, liveRender, pips } from './dom.js'
 import {
   STATS, STAT_POINTS, STAT_MAX, LEVELS, SKILLS, SKILL_GROUPS, BADGES,
   BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel,
@@ -56,10 +56,14 @@ export function replaceCharacters(doc, json) {
   })
 }
 
+
 // ---------- Interface ----------
 
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`)
+
 /**
- * Liste de l'équipage (barre latérale) + fiche détaillée.
+ * Liste de l'équipage (barre latérale) + dossier du personnage.
+ * Le dossier s'affiche en consultation ; « Modifier » fait apparaître les champs.
  * ctx : { doc, me() -> { name, isGM }, onRoll(label, target, sides), onOpen() }
  */
 export function setupSheets(ctx) {
@@ -67,7 +71,7 @@ export function setupSheets(ctx) {
   const listEl = document.getElementById('crew-list')
   const sheetEl = document.getElementById('sheet')
   let openId = null
-  let refresh = null // met à jour la fiche ouverte sans perdre le focus
+  let editing = false
 
   const canSee = (c) => ctx.me().isGM || !c.get('hidden')
   const canEdit = (c) => {
@@ -102,7 +106,7 @@ export function setupSheets(ctx) {
 
   function close() {
     openId = null
-    refresh = null
+    editing = false
     sheetEl.hidden = true
     sheetEl.innerHTML = ''
     renderList()
@@ -110,161 +114,149 @@ export function setupSheets(ctx) {
 
   function open(id) {
     ctx.onOpen?.()
+    if (id !== openId) editing = false
     openId = id
     sheetEl.hidden = false
-    build()
+    render()
     renderList()
   }
+
+  const render = liveRender(sheetEl, build)
 
   function build() {
     const c = characters.get(openId)
     if (!c || !canSee(c)) return close()
+    const data = c.toJSON()
     const stats = c.get('stats')
     const skills = c.get('skills')
-    const binders = [] // [élément, fonction qui lit la valeur]
-    const bind = (el, read) => { binders.push([el, read]); return el }
-    const editable = () => canEdit(c)
+    const mayEdit = canEdit(c)
+    const ed = editing && mayEdit
+    const isGM = ctx.me().isGM
+    const badge = BADGES.find((b) => b.name === data.badge) ?? BADGES.at(-1)
+    const roll = (label, target, sides) => ctx.onRoll(`${data.name} · ${label}`, target, sides)
+    const set = (key) => (e) => c.set(key, e.target.value)
+    const field = (key, label, multiline = false) => h('label', { class: 'field' }, h('span', {}, label),
+      multiline
+        ? h('textarea', { rows: 4, value: data[key] ?? '', onchange: set(key) })
+        : h('input', { value: data[key] ?? '', onchange: set(key) }))
+    const section = (title, extra, ...content) => h('section', { class: 'sec' },
+      h('h3', { class: 'sec-title' }, h('span', {}, title), extra && h('span', { class: 'sec-extra' }, extra)), ...content)
 
-    // Champ texte lié à une clé de la fiche (enregistré à la sortie du champ)
-    const field = (key, label, type = 'text') => {
-      const input = type === 'textarea'
-        ? h('textarea', { rows: 3, onchange: (e) => c.set(key, e.target.value) })
-        : h('input', { type, onchange: (e) => c.set(key, e.target.value) })
-      bind(input, () => c.get(key) ?? '')
-      return h('label', { class: 'field' }, h('span', {}, label), input)
+    // ---- En-tête ----
+    const age = String(data.age ?? '').trim()
+    const meta = [data.post, age && (/^\d+$/.test(age) ? `${age} ans` : age), data.country].filter(Boolean).join('  ·  ')
+    const head = h('header', { class: 'dossier-head', style: `--badge:${badge.color}` },
+      h('div', { class: 'dossier-id' },
+        ed
+          ? h('input', { class: 'dossier-name-input', value: data.name, onchange: set('name') })
+          : h('h2', { class: 'dossier-name' }, data.name),
+        !ed && h('div', { class: 'dossier-meta' }, meta || 'Dossier incomplet')),
+      h('div', { class: 'dossier-actions' },
+        ed
+          ? h('select', { onchange: set('badge') }, BADGES.map((b) => h('option', { value: b.name, selected: b.name === data.badge }, `Badge ${b.name}`)))
+          : h('span', { class: 'badge-chip' }, h('i'), `Badge ${data.badge}`),
+        !ed && data.player && h('span', { class: 'tag' }, `PJ · ${data.player}`),
+        !ed && isGM && data.hidden && h('span', { class: 'tag' }, 'Cachée'),
+        mayEdit && h('button', { class: ed ? 'small primary' : 'small', onclick: () => { editing = !editing; render() } }, ed ? 'Terminer' : 'Modifier'),
+        h('button', { class: 'icon', title: 'Fermer', onclick: close }, '×')))
+
+    // ---- Identité (édition) ----
+    const identity = ed && h('div', { class: 'edit-grid' },
+      field('post', 'Poste'), field('age', 'Âge'), field('country', "Pays d'origine"), field('player', 'Joueur (vide = PNJ)'),
+      isGM && h('div', { class: 'edit-gm' },
+        h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: data.hidden, onchange: (e) => c.set('hidden', e.target.checked) }), 'Cachée aux joueurs'),
+        h('button', {
+          class: 'small danger',
+          onclick: () => { if (confirm(`Supprimer la fiche de ${data.name} ?`)) { characters.delete(openId); close() } },
+        }, 'Supprimer la fiche')))
+
+    // ---- Caractéristiques ----
+    const statsTotal = STATS.reduce((s, { key }) => s + (Number(data.stats[key]?.base) || 0), 0)
+    const setStat = (key, part) => (e) => {
+      const value = Math.max(part === 'base' ? 0 : -20, Math.min(STAT_MAX, Number(e.target.value) || 0))
+      stats.set(key, { ...stats.get(key), [part]: value })
     }
-
-    const statsTotal = bind(h('span', { class: 'counter' }), () => {
-      const total = STATS.reduce((s, { key }) => s + (Number(stats.get(key).base) || 0), 0)
-      return `${total} / ${STAT_POINTS} points`
-    })
-    const levelsTotal = bind(h('span', { class: 'counter' }), () => {
-      const total = SKILLS.reduce((s, { name }) => s + (Number(skills.get(name)) || 0), 0)
-      return `${total} / ${BASE_SKILL_LEVELS + FREE_SKILL_LEVELS} niveaux`
-    })
-
-    const statRow = ({ key, label }) => {
-      const setStat = (part) => (e) => {
-        const value = Math.max(part === 'base' ? 0 : -20, Math.min(STAT_MAX, Number(e.target.value) || 0))
-        stats.set(key, { ...stats.get(key), [part]: value })
+    const statTile = ({ key, label }) => {
+      const { base = 0, mod = 0 } = data.stats[key] ?? {}
+      const value = statValue(data.stats, key)
+      if (ed) {
+        return h('div', { class: 'stat-tile editing' },
+          h('span', { class: 'tile-label' }, label),
+          h('div', { class: 'tile-inputs' },
+            h('label', {}, 'Base', h('input', { type: 'number', min: 0, max: STAT_MAX, value: base, onchange: setStat(key, 'base') })),
+            h('label', {}, 'Bonus', h('input', { type: 'number', min: -20, max: 20, value: mod, onchange: setStat(key, 'mod') }))))
       }
-      return h('div', { class: 'stat-row' },
-        h('span', { class: 'stat-label' }, label),
-        bind(h('input', { type: 'number', min: 0, max: STAT_MAX, title: 'Valeur de base', onchange: setStat('base') }), () => stats.get(key).base),
-        bind(h('input', { type: 'number', min: -20, max: 20, class: 'mod', title: 'Bonus / malus (états passifs)', onchange: setStat('mod') }), () => stats.get(key).mod),
-        bind(h('button', {
-          class: 'roll-btn', title: 'Jet de caractéristique (1d20)',
-          onclick: () => ctx.onRoll(`${c.get('name')} · ${label}`, statValue(stats.toJSON(), key), 20),
-        }), () => statValue(stats.toJSON(), key)),
-      )
+      return h('button', { class: 'stat-tile', title: `Lancer 1d20 ≤ ${value}`, onclick: () => roll(label, value, 20) },
+        h('span', { class: 'tile-label' }, label),
+        h('span', { class: 'tile-value' }, value),
+        Number(mod) !== 0 && h('span', { class: `tile-mod ${mod > 0 ? 'up' : 'down'}`, title: 'Bonus / malus des états passifs' }, signed(Number(mod))))
     }
 
-    const skillRow = (skill) => h('div', { class: 'skill-row' },
-      h('span', { class: 'skill-label', title: skillStatsLabel(skill) }, skill.name),
-      bind(h('select', { onchange: (e) => skills.set(skill.name, Number(e.target.value)) },
-        LEVELS.map((l, i) => h('option', { value: i }, `${i} · ${l}`))), () => String(skills.get(skill.name) ?? 0)),
-      bind(h('button', {
-        class: 'roll-btn', title: `Jet de compétence (1d100) · ${skillStatsLabel(skill)}`,
-        onclick: () => ctx.onRoll(`${c.get('name')} · ${skill.name}`, skillValue(skill, stats.toJSON(), skills.get(skill.name)), 100),
-      }), () => skillValue(skill, stats.toJSON(), skills.get(skill.name))),
-    )
+    // ---- Compétences ----
+    const levelsTotal = SKILLS.reduce((s, { name }) => s + (Number(data.skills[name]) || 0), 0)
+    const skillRow = (skill) => {
+      const level = Number(data.skills[skill.name]) || 0
+      const score = skillValue(skill, data.stats, level)
+      return h('div', { class: `skill${level ? '' : ' untrained'}`, title: `${LEVELS[level]} · ${skillStatsLabel(skill)}` },
+        h('span', { class: 'skill-name' }, skill.name),
+        pips(5, level, ed ? (n) => skills.set(skill.name, n) : null, (n) => `${n} · ${LEVELS[n]}`),
+        h('button', { class: 'score', title: `Lancer 1d100 ≤ ${score}`, onclick: () => roll(skill.name, score, 100) }, score))
+    }
 
-    // Listes (talents, états passifs) : reconstruites sauf si on est en train d'y écrire
+    // ---- Talents, états passifs ----
     const listBlock = (key, title) => {
       const arr = c.get(key)
-      const container = h('div', { class: 'list-items' })
+      const items = data[key] ?? []
       const update = (i, part) => (e) => {
         const item = { ...arr.get(i), [part]: e.target.value }
         ctx.doc.transact(() => { arr.delete(i, 1); arr.insert(i, [item]) })
       }
-      const render = () => {
-        if (container.contains(document.activeElement)) return
-        container.innerHTML = ''
-        arr.toArray().forEach((item, i) => container.append(h('div', { class: 'list-item' },
-          h('input', { value: item.name, placeholder: 'Nom', disabled: !editable(), onchange: update(i, 'name') }),
-          h('textarea', { value: item.desc, rows: 2, placeholder: 'Description', disabled: !editable(), onchange: update(i, 'desc') }),
-          editable() && h('button', { class: 'icon', title: 'Supprimer', onclick: () => arr.delete(i, 1) }, '×'),
-        )))
-        if (!arr.length) container.append(h('p', { class: 'muted' }, 'Aucun'))
-      }
-      binders.push([null, render])
-      return h('section', { class: 'block' },
-        h('h3', {}, title, h('button', { class: 'small editable-only', onclick: () => arr.push([{ name: '', desc: '' }]) }, '+ Ajouter')),
-        container)
+      return section(title, ed && h('button', { class: 'small', onclick: () => arr.push([{ name: '', desc: '' }]) }, '+ Ajouter'),
+        items.length
+          ? h('div', { class: 'traits' }, items.map((item, i) => (ed
+            ? h('div', { class: 'trait editing' },
+              h('input', { value: item.name, placeholder: 'Nom', onchange: update(i, 'name') }),
+              h('button', { class: 'icon', title: 'Supprimer', onclick: () => arr.delete(i, 1) }, '×'),
+              h('textarea', { rows: 2, value: item.desc, placeholder: 'Description', onchange: update(i, 'desc') }))
+            : h('div', { class: 'trait' }, h('b', {}, item.name || 'Sans nom'), item.desc && h('p', {}, item.desc)))))
+          : h('p', { class: 'muted' }, 'Aucun'))
     }
 
-    const badgeSelect = bind(h('select', { class: 'badge-select', onchange: (e) => c.set('badge', e.target.value) },
-      BADGES.map((b) => h('option', { value: b.name }, `Badge ${b.name}`))), () => c.get('badge'))
+    // ---- Dossier (textes) ----
+    const notes = TEXTS.filter(([k]) => ed || String(data[k] ?? '').trim())
 
-    const gmTools = ctx.me().isGM && h('div', { class: 'gm-tools' },
-      h('label', { class: 'check' },
-        bind(h('input', { type: 'checkbox', onchange: (e) => c.set('hidden', e.target.checked) }), () => c.get('hidden')),
-        'Cachée aux joueurs'),
-      h('button', {
-        class: 'danger',
-        onclick: () => { if (confirm(`Supprimer la fiche de ${c.get('name')} ?`)) { characters.delete(openId); close() } },
-      }, 'Supprimer'),
-    )
-
-    const nameInput = bind(h('input', { class: 'sheet-name', onchange: (e) => c.set('name', e.target.value) }), () => c.get('name'))
-
-    sheetEl.innerHTML = ''
-    sheetEl.append(
-      h('header', { class: 'sheet-head' },
-        nameInput, badgeSelect, gmTools,
-        h('button', { class: 'icon close', title: 'Fermer', onclick: close }, '×')),
-      bind(h('p', { class: 'readonly-note' }), () => editable() ? '' : `Fiche en lecture seule (appartient à ${c.get('player')})`),
-      h('div', { class: 'sheet-body' },
-        h('section', { class: 'block ident' }, IDENTITY.map(([k, l, t]) => field(k, l, t))),
-        h('section', { class: 'block' },
-          h('h3', {}, 'Caractéristiques innées', statsTotal),
-          h('p', { class: 'hint' }, 'Base · bonus/malus · valeur (cliquer pour lancer 1d20)'),
-          h('div', { class: 'stats-grid' },
-            ['Physique', 'Mentale'].map((g) => h('div', {},
-              h('h4', {}, g), STATS.filter((s) => s.group === g).map(statRow))))),
-        h('section', { class: 'block' },
-          h('h3', {}, 'Compétences', levelsTotal),
-          h('p', { class: 'hint' }, 'Cliquer sur un score pour lancer 1d100. Survoler un nom pour voir ses caractéristiques.'),
-          h('div', { class: 'skills-grid' },
-            SKILL_GROUPS.map((g, gi) => h('div', {},
-              h('h4', {}, g), SKILLS.filter((s) => s.group === gi).map(skillRow))))),
-        LISTS.map(([k, t]) => listBlock(k, t)),
-        h('section', { class: 'block texts' }, TEXTS.map(([k, l]) => field(k, l, 'textarea'))),
-      ),
-    )
-
-    refresh = () => {
-      const ro = !editable()
-      sheetEl.classList.toggle('readonly', ro)
-      for (const [el, read] of binders) {
-        if (!el) { read(); continue }
-        if (el === document.activeElement) continue
-        const v = read()
-        if (el.tagName === 'INPUT' && el.type === 'checkbox') el.checked = !!v
-        else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') el.value = v
-        else el.textContent = v
-        if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !el.closest('.gm-tools')) el.disabled = ro
-      }
-    }
-    refresh()
+    sheetEl.append(...[
+      head,
+      !mayEdit && h('p', { class: 'readonly-note' }, `Lecture seule : fiche de ${data.player}`),
+      identity,
+      section('Caractéristiques innées', `${statsTotal} / ${STAT_POINTS} points`,
+        h('div', { class: 'stat-groups' }, ['Physique', 'Mentale'].map((g) => h('div', { class: 'stat-group' },
+          h('h4', {}, g), h('div', { class: 'stat-tiles' }, STATS.filter((s) => s.group === g).map(statTile)))))),
+      section('Compétences', `${levelsTotal} / ${BASE_SKILL_LEVELS + FREE_SKILL_LEVELS} niveaux`,
+        h('div', { class: 'skill-cols' }, SKILL_GROUPS.map((g, gi) => h('div', {},
+          h('h4', {}, g.replace('Aptitudes ', '')), SKILLS.filter((s) => s.group === gi).map(skillRow))))),
+      h('div', { class: 'two-cols' }, LISTS.map(([k, t]) => listBlock(k, t))),
+      section('Dossier', null,
+        notes.length
+          ? h('div', { class: 'notes' }, notes.map(([k, l]) => (ed
+            ? field(k, l, true)
+            : h('div', { class: 'note' }, h('span', { class: 'note-label' }, l), h('p', {}, data[k])))))
+          : h('p', { class: 'muted' }, 'Aucune note.')),
+    ].filter(Boolean))
   }
 
-  characters.observeDeep((events) => {
+  characters.observeDeep(() => {
     renderList()
-    if (!openId) return
-    const c = characters.get(openId)
-    if (!c || !canSee(c)) return close()
-    // La fiche ouverte a-t-elle changé ?
-    if (events.some((e) => e.target !== characters || e.changes.keys.has(openId))) {
-      if (events.some((e) => e.target === characters && e.changes.keys.get(openId)?.action === 'update')) build()
-      else refresh?.()
-    }
+    if (openId) render()
   })
 
   document.getElementById('btn-new-sheet').addEventListener('click', () => {
     const id = crypto.randomUUID()
     ctx.doc.transact(() => writeCharacter(characters, id, { hidden: ctx.me().isGM }))
     open(id)
+    editing = true
+    render()
   })
 
   return {
@@ -272,7 +264,7 @@ export function setupSheets(ctx) {
     /** À appeler quand le rôle ou le nom change */
     rerender() {
       renderList()
-      if (openId) build()
+      if (openId) render()
     },
   }
 }

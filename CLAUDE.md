@@ -18,7 +18,7 @@ index.html        # structure : barre du haut, canvas, journal
 src/net.js        # connect(roomId) : Y.Doc + Trystero + IndexedDB
 src/main.js       # identité/rôle, jets, journal, export/import (assemble les modules)
 src/board.js      # plateau : scènes, image de fond partagée, caméra locale (pan/zoom), pions
-src/dom.js        # utilitaire h() pour créer des éléments
+src/dom.js        # h() pour créer des éléments, liveRender() (redessine sans écraser la saisie), pips() (barrettes de niveau)
 src/music.js      # musique d'ambiance YouTube synchronisée (lecteur IFrame officiel, gratuit, sans compte)
 src/rules.js      # règles : caractéristiques, compétences, badges, calcul des scores
 src/dice.js       # jets sous la valeur, critiques, avantage/désavantage

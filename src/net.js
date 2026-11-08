@@ -15,7 +15,15 @@ export function connect(roomId, { onPeers } = {}) {
   const doc = new Y.Doc()
   const persistence = new IndexeddbPersistence(`starboard:${roomId}`, doc)
 
-  const room = joinRoom({ appId: APP_ID }, roomId)
+  // Si le réseau échoue (WebRTC indisponible…), l'outil reste utilisable en local au lieu de planter.
+  let room
+  try {
+    room = joinRoom({ appId: APP_ID }, roomId)
+  } catch (err) {
+    console.error('Connexion P2P impossible, mode hors ligne :', err)
+    onPeers?.(-1)
+    return { doc, room: null, persistence }
+  }
   const [sendUpdate, onUpdate] = room.makeAction('ydoc')
   const [sendState, onState] = room.makeAction('ystate')
 

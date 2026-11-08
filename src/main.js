@@ -33,7 +33,7 @@ $('role-select').value = role
 
 // ---------- État partagé ----------
 const { doc } = connect(roomId, {
-  onPeers: (n) => ($('peer-count').textContent = `${n} pair${n > 1 ? 's' : ''}`),
+  onPeers: (n) => ($('peer-count').textContent = n < 0 ? 'hors ligne' : `${n} pair${n > 1 ? 's' : ''}`),
 })
 const tokens = doc.getMap('tokens') // id -> { x, y, color, label, scene } (géré par board.js)
 const log = doc.getArray('log') //     [{ who, text, t, secret?, roll? }]
