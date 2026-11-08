@@ -12,6 +12,7 @@ import { CHARACTER_MIME } from './sheets.js'
 // La caméra reste locale : chacun cadre comme il veut.
 
 const DEFAULT_SCENE = 'main'
+const SHIP_SCENE = 'ship' // scène réservée à l'onglet Vaisseau
 const MAX_IMAGE = 4096 // côté max après compression
 const ZOOM_MIN = 0.1
 const ZOOM_MAX = 4
@@ -55,9 +56,17 @@ export function setupBoard(ctx) {
   const g = canvas.getContext('2d')
   const bar = document.getElementById('scene-bar')
 
-  // ---------- Scène courante ----------
-  const sceneId = () => (scenes.has(board.get('scene')) ? board.get('scene') : DEFAULT_SCENE)
-  const scene = () => scenes.get(sceneId()) ?? { name: 'Plateau', grid: 50, image: null }
+  // ---------- Vue (onglet, local à chaque joueur) et scène courante ----------
+  // « ship » : plan du vaisseau (scène fixe SHIP_SCENE, sans fond importé) ; « map » : scènes du MJ.
+  let mode = 'ship'
+  const mapScene = () => {
+    const id = board.get('scene')
+    return scenes.has(id) && id !== SHIP_SCENE ? id : DEFAULT_SCENE
+  }
+  const sceneId = () => (mode === 'ship' ? SHIP_SCENE : mapScene())
+  const scene = () => (mode === 'ship'
+    ? { name: 'Vaisseau', grid: 40, image: null }
+    : scenes.get(sceneId()) ?? { name: 'Plateau', grid: 50, image: null })
   const tokenScene = (t) => t.scene ?? DEFAULT_SCENE
   const tokenSize = () => Number(scene().grid) || 50
 
@@ -150,6 +159,15 @@ export function setupBoard(ctx) {
       g.fillText(label, t.x, t.y)
       g.globalAlpha = 1
     })
+
+    // ponytail: vue Vaisseau vide pour l'instant, le plan spécial du Gaïa viendra ici
+    if (mode === 'ship') {
+      g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
+      g.fillStyle = '#6c85b3'
+      g.font = '14px "Segoe UI", system-ui'
+      g.textAlign = 'center'
+      g.fillText('Plan du vaisseau : en préparation', width / 2, 28)
+    }
 
     document.getElementById('zoom-label').textContent = `${Math.round(c.zoom * 100)} %`
   }
@@ -334,10 +352,11 @@ export function setupBoard(ctx) {
   }
 
   function renderBar() {
+    bar.innerHTML = ''
+    if (mode === 'ship') return // vue Vaisseau : pas de gestion de scènes ni de fond
     const s = scene()
     const isGM = ctx.me().isGM
-    const list = sortedScenes()
-    bar.innerHTML = ''
+    const list = sortedScenes().filter(([id]) => id !== SHIP_SCENE)
     bar.append(...[
       isGM && list.length
         ? h('select', { title: 'Scène affichée chez tout le monde', onchange: (e) => board.set('scene', e.target.value) },
@@ -391,6 +410,15 @@ export function setupBoard(ctx) {
   return {
     addToken,
     rerender() { renderBar(); draw() },
+    /** Change d'onglet : 'ship' (Vaisseau) ou 'map' (Carte). */
+    setMode(m) {
+      mode = m === 'map' ? 'map' : 'ship'
+      lastScene = sceneId()
+      lastImage = scene().image
+      if (!cam().fitted) fit()
+      renderBar()
+      draw()
+    },
     /** Données à exporter (images encodées en base64 dans le JSON). */
     exportData() {
       const imgs = {}

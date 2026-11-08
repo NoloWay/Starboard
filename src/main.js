@@ -40,6 +40,16 @@ const log = doc.getArray('log') //     [{ who, text, t, secret?, roll? }]
 
 // ---------- Plateau (scènes, caméra, pions) ----------
 const board = setupBoard({ doc, me })
+
+// Onglets Vaisseau / Carte (choix local, mémorisé)
+function setView(v) {
+  board.setMode(v)
+  store.set('starboard:view', v)
+  $('view-tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.view === v))
+}
+$('view-tabs').addEventListener('click', (e) => { if (e.target.dataset.view) setView(e.target.dataset.view) })
+setView(store.get('starboard:view') === 'map' ? 'map' : 'ship')
+
 const music = setupMusic({ doc, me })
 
 $('btn-add').addEventListener('click', () => {

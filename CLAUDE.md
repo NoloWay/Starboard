@@ -17,7 +17,7 @@ Aucun hébergement payant, aucun serveur à maintenir. Le seul coût accepté es
 index.html        # structure : barre du haut, canvas, journal
 src/net.js        # connect(roomId) : Y.Doc + Trystero + IndexedDB
 src/main.js       # identité/rôle, jets, journal, export/import (assemble les modules)
-src/board.js      # plateau : scènes, image de fond partagée, caméra locale (pan/zoom), pions
+src/board.js      # plateau : onglets Vaisseau (scène fixe 'ship', sans fond importé) / Carte (scènes du MJ, image de fond partagée), caméra locale, jetons
 src/dom.js        # h() pour créer des éléments, liveRender() (redessine sans écraser la saisie), pips() (barrettes de niveau)
 src/music.js      # musique d'ambiance YouTube synchronisée (lecteur IFrame officiel, gratuit, sans compte)
 src/rules.js      # règles : caractéristiques, compétences, badges, calcul des scores

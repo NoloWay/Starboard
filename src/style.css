@@ -79,6 +79,16 @@ main { flex: 1; display: flex; min-height: 0; }
 #zoom-label { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sheet { z-index: 2; }
 
+/* ---------- Onglets Vaisseau / Carte ---------- */
+.view-tabs { display: flex; gap: 4px; align-self: stretch; margin: -8px 0; }
+.view-tabs button {
+  border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 0 16px;
+  color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.78rem;
+}
+.view-tabs button:hover { background: none; color: var(--text); }
+.view-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); text-shadow: 0 0 8px rgba(56, 232, 255, 0.6); }
+
 /* ---------- Barre du haut : identité, modes de jet ---------- */
 .topbar { flex-wrap: wrap; }
 .identity { display: flex; gap: 8px; align-items: center; }

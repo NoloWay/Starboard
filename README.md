@@ -10,6 +10,7 @@ npm run dev
 Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de salle) pour voir la synchronisation.
 
 ## Utilisation
+- **Onglets Vaisseau / Carte** (en haut) : chacun choisit sa vue. « Vaisseau » = plan du Gaïa (en préparation, sans gestion de fond) ; « Carte » = scènes et cartes importées par le MJ. Chaque vue a ses propres jetons.
 - **Plateau** : glisser dans le vide (ou clic milieu) pour déplacer la vue, molette pour zoomer, « Recadrer » pour voir toute la carte. Chacun cadre comme il veut.
 - **Scènes** (MJ, en haut du plateau) : créer une scène, lui donner une image de fond (partagée automatiquement), régler la taille des jetons. La scène choisie par le MJ s'affiche chez tout le monde.
 - **Plans du Gaïa** : `npm run plan-vaisseau` génère `references/plans/gaia-etage-*.svg` depuis l'Excel de gestion ; les mettre en image de fond d'une scène (régler « Jetons » vers 40 pour des jetons à la taille des cases du plan). Le plan est redessiné en vectoriel (coque lissée, murs continus, symboles de portes et caméras).
