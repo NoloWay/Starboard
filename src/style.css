@@ -79,6 +79,24 @@ main { flex: 1; display: flex; min-height: 0; }
 #zoom-label { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sheet { z-index: 2; }
 
+/* ---------- Fenêtre d'une porte (plan du vaisseau) ---------- */
+.door-popup {
+  position: absolute; z-index: 1;
+  width: 250px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  background: rgba(10, 16, 36, 0.97);
+  border: 1px solid var(--line); border-left: 3px solid #ff5a6a; border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 0.85rem;
+}
+.door-popup header { display: flex; justify-content: space-between; align-items: center; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.75rem; color: var(--accent); }
+.door-popup p { margin: 0; }
+.door-rooms { color: #eaf6ff; }
+.door-popup select { border-left: 4px solid var(--badge); }
+.door-badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.door-badges i { width: 12px; height: 12px; border-radius: 50%; background: var(--badge); border: 1px solid rgba(255, 255, 255, 0.3); }
+.door-default { display: flex; justify-content: space-between; align-items: center; }
+
 /* ---------- Onglets Vaisseau / Carte ---------- */
 .view-tabs { display: flex; gap: 4px; align-self: stretch; margin: -8px 0; }
 .view-tabs button {

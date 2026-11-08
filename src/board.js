@@ -1,7 +1,7 @@
 import { h } from './dom.js'
-import { BADGES } from './rules.js'
+import { BADGES, DOOR_ACCESS, DOOR_LEVELS, stricterLevel } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
-import { CELL, DECKS, deckSize, drawDeck, roomAt } from './shipMap.js'
+import { ALL_DOORS, CELL, DECKS, deckSize, doorAt, drawDeck, roomAt } from './shipMap.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
 //
@@ -52,6 +52,7 @@ export function setupBoard(ctx) {
   const board = doc.getMap('board')
   const tokens = doc.getMap('tokens')
   const characters = doc.getMap('characters')
+  const doorLevels = doc.getMap('doorLevels') // id de porte → niveau d'accréditation choisi (sinon : défaut du plan)
 
   const canvas = document.getElementById('board')
   const g = canvas.getContext('2d')
@@ -132,7 +133,7 @@ export function setupBoard(ctx) {
     g.setTransform(devicePixelRatio * c.zoom, 0, 0, devicePixelRatio * c.zoom, devicePixelRatio * c.x, devicePixelRatio * c.y)
 
     const bmp = mode === 'ship' ? null : bitmap(s.image)
-    if (mode === 'ship') drawDeck(g, deck, c.zoom)
+    if (mode === 'ship') drawDeck(g, deck, c.zoom, doorLevel)
     else if (bmp) {
       g.imageSmoothingEnabled = c.zoom < 2 // plans en « pixel art » : net quand on zoome
       g.drawImage(bmp, 0, 0, s.width, s.height)
@@ -220,7 +221,17 @@ export function setupBoard(ctx) {
     }
   })
 
-  function endDrag() {
+  function endDrag(e) {
+    // Simple clic (sans déplacement) dans la vue Vaisseau : ouvre la fiche de la porte cliquée
+    if (drag?.kind === 'pan' && e?.type === 'pointerup' && mode === 'ship') {
+      const { sx, sy } = pointer(e)
+      if (Math.hypot(sx - drag.sx, sy - drag.sy) < 4) {
+        const w = toWorld(sx, sy)
+        const door = doorAt(deck, w.x, w.y)
+        if (door) openDoor(door, sx, sy)
+        else closeDoor()
+      }
+    }
     drag = null
     canvas.classList.remove('dragging')
   }
@@ -293,6 +304,48 @@ export function setupBoard(ctx) {
     })
   }
 
+  // ---------- Portes du vaisseau : niveau d'accréditation (modifiable par tous) ----------
+  const doorLevel = (door) => doorLevels.get(door.id) ?? door.level
+  let popup = null // { el, door }
+
+  function closeDoor() {
+    popup?.el.remove()
+    popup = null
+  }
+
+  function openDoor(door, sx, sy) {
+    closeDoor()
+    const el = h('div', { class: 'door-popup' })
+    popup = { el, door }
+    renderDoor()
+    canvas.parentElement.append(el)
+    // Placée à côté du clic, sans sortir du plateau
+    const { width, height } = view()
+    el.style.left = `${Math.min(sx + 14, width - el.offsetWidth - 8)}px`
+    el.style.top = `${Math.min(Math.max(8, sy - 20), height - el.offsetHeight - 8)}px`
+  }
+
+  function renderDoor() {
+    if (!popup) return
+    const { el, door } = popup
+    const level = doorLevel(door)
+    const color = (name) => BADGES.find((b) => b.name === name)?.color
+    el.innerHTML = ''
+    el.append(
+      h('header', {}, h('b', {}, 'Porte'), h('button', { class: 'icon', title: 'Fermer', onclick: closeDoor }, '×')),
+      h('p', { class: 'door-rooms' }, door.rooms.join('  ↔  ') || 'Accès'),
+      h('label', { class: 'field' }, 'Accréditation requise',
+        h('select', {
+          style: `--badge:${color(level)}`,
+          onchange: (e) => (e.target.value === door.level ? doorLevels.delete(door.id) : doorLevels.set(door.id, e.target.value)),
+        }, DOOR_LEVELS.map((l) => h('option', { value: l, selected: l === level }, `Badge ${l}`)))),
+      h('div', { class: 'door-badges' }, h('span', { class: 'muted' }, 'Ouvrent :'),
+        DOOR_ACCESS[level].map((b) => h('i', { title: `Badge ${b}`, style: `--badge:${color(b)}` }))),
+      h('p', { class: 'muted door-default' }, `Par défaut : badge ${door.level}`,
+        level !== door.level && h('button', { class: 'small', onclick: () => doorLevels.delete(door.id) }, 'Rétablir')),
+    )
+  }
+
   // ---------- Barre des scènes ----------
   const sortedScenes = () => [...scenes.entries()].sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
 
@@ -362,6 +415,7 @@ export function setupBoard(ctx) {
         class: d === deck ? 'on' : '',
         onclick: () => {
           deck = d
+          closeDoor()
           try { localStorage.setItem('starboard:deck', d) } catch { /* stockage indisponible */ }
           lastScene = sceneId()
           if (!cam().fitted) fit()
@@ -369,6 +423,25 @@ export function setupBoard(ctx) {
           draw()
         },
       }, `Étage ${d.replace('-', '−')}`))))
+      // MJ : niveau minimal pour toutes les portes (chaque porte garde son niveau par défaut s'il est plus élevé)
+      if (ctx.me().isGM) {
+        const level = h('select', { title: 'Niveau à appliquer' }, DOOR_LEVELS.map((l) => h('option', { value: l }, `Badge ${l}`)))
+        bar.append(h('span', { class: 'sep' }), h('span', { class: 'muted' }, 'Portes'), level,
+          h('button', {
+            class: 'small',
+            title: 'Toutes les portes passent à ce niveau, sauf celles dont le niveau par défaut est plus élevé',
+            onclick: () => doc.transact(() => ALL_DOORS.forEach((d) => {
+              const v = stricterLevel(level.value, d.level)
+              if (v === d.level) doorLevels.delete(d.id)
+              else doorLevels.set(d.id, v)
+            })),
+          }, 'Appliquer à toutes'),
+          h('button', {
+            class: 'small danger',
+            title: 'Rendre à toutes les portes leur niveau par défaut',
+            onclick: () => { if (confirm('Remettre toutes les portes à leur niveau par défaut ?')) doorLevels.clear() },
+          }, 'Réinitialiser'))
+      }
       return
     }
     const s = scene()
@@ -415,6 +488,7 @@ export function setupBoard(ctx) {
   images.observe(draw)
   tokens.observe(draw)
   characters.observeDeep(draw) // nom, badge ou visibilité d'un personnage
+  doorLevels.observe(() => { draw(); renderDoor() })
 
   addEventListener('resize', resize)
   document.getElementById('btn-fit').addEventListener('click', fit)
@@ -430,6 +504,7 @@ export function setupBoard(ctx) {
     /** Change d'onglet : 'ship' (Vaisseau) ou 'map' (Carte). */
     setMode(m) {
       mode = m === 'map' ? 'map' : 'ship'
+      closeDoor()
       lastScene = sceneId()
       lastImage = scene().image
       if (!cam().fitted) fit()

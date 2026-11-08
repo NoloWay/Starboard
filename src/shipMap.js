@@ -1,6 +1,7 @@
 // Plan du Gaïa (onglet Vaisseau) : dessin vectoriel d'un étage sur le canvas, net à tous les zooms.
 // Données générées par `npm run plan-vaisseau` (scripts/plan-vaisseau.mjs) depuis l'Excel de gestion.
 import plan from './data/gaia-plan.json'
+import { BADGES } from './rules.js'
 
 export const CELL = plan.cell
 export const DECKS = plan.decks.map((d) => d.name) // du haut vers le bas : 1, 0, -1
@@ -101,8 +102,24 @@ function fitFont(g, text, maxWidth, size, min) {
   return null
 }
 
-/** Dessine un étage. Le contexte est déjà dans le repère monde (zoom / déplacement appliqués). */
-export function drawDeck(g, deckName, zoom) {
+/** Toutes les portes du vaisseau (tous étages) : { id, level (par défaut), rooms } */
+export const ALL_DOORS = plan.decks.flatMap((d) => d.doors)
+
+/** Porte sous un point (coordonnées monde), à moins d'un tiers de case de son trait. */
+export function doorAt(deckName, x, y) {
+  const deck = plan.decks.find((d) => d.name === deckName)
+  return deck?.doors.find(({ seg: [x1, y1, x2, y2] }) => {
+    const cx = Math.max(Math.min(x1, x2), Math.min(Math.max(x1, x2), x))
+    const cy = Math.max(Math.min(y1, y2), Math.min(Math.max(y1, y2), y))
+    return Math.hypot(x - cx, y - cy) <= CELL * 0.33
+  }) ?? null
+}
+
+/**
+ * Dessine un étage. Le contexte est déjà dans le repère monde (zoom / déplacement appliqués).
+ * doorLevel(door) : niveau d'accréditation actuel de la porte (personnalisé ou par défaut).
+ */
+export function drawDeck(g, deckName, zoom, doorLevel = (d) => d.level) {
   const deck = compiled(deckName)
   if (!deck) return
   const px = 1 / zoom // un pixel écran, en unités monde
@@ -141,7 +158,8 @@ export function drawDeck(g, deckName, zoom) {
   g.lineWidth = CELL * 0.1
   for (const [x1, y1, x2, y2] of deck.access) { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke() }
   g.setLineDash([])
-  for (const [x1, y1, x2, y2] of deck.doors) {
+  for (const door of deck.doors) {
+    const [x1, y1, x2, y2] = door.seg
     const inset = CELL * 0.12
     const h = y1 === y2
     const a = h ? [x1 + inset, y1] : [x1, y1 + inset]
@@ -152,6 +170,12 @@ export function drawDeck(g, deckName, zoom) {
     g.lineWidth = CELL * 0.1
     g.strokeStyle = '#ff5a6a'
     g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke()
+    // Pastille : couleur du badge requis pour l'ouvrir
+    const color = BADGES.find((x) => x.name === doorLevel(door))?.color ?? '#41c05a'
+    g.fillStyle = color
+    g.strokeStyle = 'rgba(234, 246, 255, 0.8)' // anneau clair : lisible même pour les badges sombres
+    g.lineWidth = CELL * 0.035
+    g.beginPath(); g.arc((x1 + x2) / 2, (y1 + y2) / 2, CELL * 0.13, 0, Math.PI * 2); g.fill(); g.stroke()
   }
 
   // Caméras

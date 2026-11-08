@@ -62,6 +62,28 @@ export const BADGES = [
   { name: 'Vert', color: '#41c05a' },
 ]
 
+// ---------- Portes du Gaïa (« Base de donnée générale », niveaux d'accréditation des badges) ----------
+// Niveau requis par une porte → badges qui l'ouvrent.
+//   Rouge / Gris / Noir : accès universel hiérarchique. Bleu (sécurité) : armurerie, zones médicales restreintes.
+//   Orange (chefs de service) et Violet (secours) : tout sauf armurerie et défense.
+//   Jaune : zones techniques, pas les laboratoires. Rose : laboratoires, pas les zones techniques.
+export const DOOR_ACCESS = {
+  Vert: ['Rouge', 'Gris', 'Noir', 'Bleu', 'Orange', 'Violet', 'Jaune', 'Rose', 'Vert'],
+  Jaune: ['Rouge', 'Gris', 'Noir', 'Bleu', 'Orange', 'Violet', 'Jaune'],
+  Rose: ['Rouge', 'Gris', 'Noir', 'Bleu', 'Orange', 'Violet', 'Rose'],
+  Violet: ['Rouge', 'Gris', 'Noir', 'Bleu', 'Orange', 'Violet'],
+  Orange: ['Rouge', 'Gris', 'Noir', 'Orange'],
+  Bleu: ['Rouge', 'Gris', 'Noir', 'Bleu'],
+  Noir: ['Rouge', 'Gris', 'Noir'],
+  Gris: ['Rouge', 'Gris'],
+  Rouge: ['Rouge'],
+}
+export const DOOR_LEVELS = Object.keys(DOOR_ACCESS) // du plus ouvert au plus restreint
+// Rang de restriction (Jaune / Rose et Orange / Bleu sont des accès parallèles de même rang)
+const DOOR_RANK = { Vert: 0, Jaune: 1, Rose: 1, Violet: 2, Orange: 3, Bleu: 3, Noir: 4, Gris: 5, Rouge: 6 }
+/** Le plus restrictif des deux niveaux (à égalité, on garde le premier). */
+export const stricterLevel = (a, b) => ((DOOR_RANK[b] ?? 0) > (DOOR_RANK[a] ?? 0) ? b : a)
+
 /** Valeur effective d'une caractéristique (base + bonus/malus des états passifs). */
 export function statValue(stats, key) {
   const s = stats?.[key] ?? {}

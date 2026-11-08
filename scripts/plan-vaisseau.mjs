@@ -8,6 +8,7 @@
 // Les contours en escalier sont lissés : marches → diagonales, puis angles arrondis (courbes).
 import ExcelJS from 'exceljs'
 import { writeFileSync, mkdirSync } from 'node:fs'
+import { stricterLevel } from '../src/rules.js'
 
 const SRC = new URL('../references/Excel de gestion du RP.xlsx', import.meta.url)
 const OUT = new URL('../src/data/gaia-plan.json', import.meta.url)
@@ -93,9 +94,8 @@ function destairLoop(loop) {
   return out
 }
 
-/** Chemin SVG d'une boucle aux angles arrondis (rayon en cases, plafonné par les segments). */
-function roundedPath(loop, radius, ox, oy) {
-  const P = loop.map(([x, y]) => [(x - ox) * CELL, (y - oy) * CELL])
+/** Chemin SVG d'un polygone (points en pixels) aux angles arrondis (rayon en cases, plafonné par les segments). */
+function roundedPath(P, radius) {
   const m = P.length
   const R = radius * CELL
   const toward = (a, b, d) => {
@@ -115,7 +115,7 @@ function roundedPath(loop, radius, ox, oy) {
   return `${d}Z`
 }
 
-/** Arêtes unitaires alignées → segments fusionnés [x1, y1, x2, y2] (unités de case). */
+/** Arêtes unitaires alignées → segments fusionnés { o, line, from, to } (unités de case). */
 function mergeEdges(list) {
   const groups = new Map()
   for (const [o, line, pos] of list) {
@@ -131,7 +131,7 @@ function mergeEdges(list) {
     let prev = s
     for (const p of [...positions.slice(1), Infinity]) {
       if (p === prev + 1) { prev = p; continue }
-      out.push(o === 'h' ? [s, Number(line), prev + 1, Number(line)] : [Number(line), s, Number(line), prev + 1])
+      out.push({ o, line: Number(line), from: s, to: prev + 1 })
       s = p
       prev = p
     }
@@ -139,7 +139,25 @@ function mergeEdges(list) {
   return out
 }
 
-// ---------- Types de pièces ----------
+// ---------- Types de pièces, corrections manuelles ----------
+
+// Noms corrigés (étage|code)
+const NAME_OVERRIDES = { '0|3': 'Salle de transit' }
+// Formes redessinées (étage|code) : hexagone régulier pointe en haut, côtés verticaux (là où sont les portes)
+const HEXAGONS = new Set(['0|1'])
+
+// Taille visée (en cases) pour la plus petite dimension d'une zone, une fois la grille redimensionnée
+const TARGET_SPAN = { room: 2.6, corridor: 1.4, electric: 1.1, ventilation: 1.1, maintenance: 1.1 }
+const STRUCTURE_SPAN = 0.6 // colonnes / rangées sans pièce (structure vide de la coque) : resserrées
+
+// Niveau d'accréditation par défaut des portes, d'après la pièce desservie (« Base de donnée générale »)
+const LEVEL_RULES = [
+  [/commandant second/, 'Gris'], [/quartiers du commandant/, 'Rouge'], [/armurerie/, 'Bleu'],
+  [/commandement|manoeuvre/, 'Noir'], [/laboratoire médical/, 'Violet'],
+  [/laboratoire|botanique|serre|observatoire/, 'Rose'],
+  [/réacteur|générateur|propulseur|contrôle|maintenance|entretien|atelier|hangar|systèmes de vie/, 'Jaune'],
+]
+const TYPE_LEVEL = { electric: 'Jaune', ventilation: 'Jaune', maintenance: 'Jaune' }
 
 function classify(code, name) {
   if (/^el\d/.test(code)) return { type: 'electric', label: `Gaine électrique ${code.toUpperCase()}` }
@@ -277,29 +295,80 @@ for (const deck of decks) {
   const minC = Math.min(...all.map(([, c]) => c)) - 1
   const maxR = Math.max(...all.map(([r]) => r)) + 2
   const maxC = Math.max(...all.map(([, c]) => c)) + 2
-  const X = (c) => n((c - minC) * CELL)
-  const Y = (r) => n((r - minR) * CELL)
-  const shape = (mask, radius) => contours(mask).map((l) => roundedPath(destairLoop(l), radius, minC, minR)).join('')
+
+  // Infos par pièce : type, nom affiché, emprise
+  const info = new Map()
+  for (const [id, room] of rooms) {
+    const cells = [...room.cells].map((k) => k.split(',').map(Number))
+    const { type, label } = classify(room.code, room.name)
+    const name = NAME_OVERRIDES[`${deck.name}|${room.code}`] ?? room.name
+    info.set(id, {
+      type, cells, name,
+      label: type === 'room' ? name : label,
+      r0: Math.min(...cells.map(([r]) => r)), r1: Math.max(...cells.map(([r]) => r)),
+      c0: Math.min(...cells.map(([, c]) => c)), c1: Math.max(...cells.map(([, c]) => c)),
+    })
+  }
+
+  // Grille redimensionnée (comme les colonnes d'un tableur) : les petites pièces s'élargissent,
+  // les grandes et la structure vide se resserrent ; toutes les pièces restent jointives.
+  const colW = new Map()
+  const rowH = new Map()
+  for (let c = minC; c <= maxC; c++) colW.set(c, STRUCTURE_SPAN)
+  for (let r = minR; r <= maxR; r++) rowH.set(r, STRUCTURE_SPAN)
+  const clamp = (v) => Math.max(0.7, Math.min(2, v))
+  for (const z of info.values()) {
+    const fc = clamp(TARGET_SPAN[z.type] / (z.c1 - z.c0 + 1))
+    const fr = clamp(TARGET_SPAN[z.type] / (z.r1 - z.r0 + 1))
+    for (let c = z.c0; c <= z.c1; c++) colW.set(c, Math.max(colW.get(c), fc))
+    for (let r = z.r0; r <= z.r1; r++) rowH.set(r, Math.max(rowH.get(r), fr))
+  }
+  const cumul = (sizes, from, to) => {
+    const pos = new Map([[from, 0]])
+    for (let i = from; i <= to; i++) pos.set(i + 1, pos.get(i) + sizes.get(i))
+    return pos
+  }
+  const colPos = cumul(colW, minC, maxC)
+  const rowPos = cumul(rowH, minR, maxR)
+  // Coordonnée de grille (éventuellement fractionnaire) → pixels
+  const gx = (v) => { const i = Math.floor(v); return n(((colPos.get(i) ?? colPos.get(maxC + 1)) + (v - i) * (colW.get(i) ?? 0)) * CELL) }
+  const gy = (v) => { const i = Math.floor(v); return n(((rowPos.get(i) ?? rowPos.get(maxR + 1)) + (v - i) * (rowH.get(i) ?? 0)) * CELL) }
+  const shape = (mask, radius) => contours(mask).map((l) => roundedPath(destairLoop(l).map(([x, y]) => [gx(x), gy(y)]), radius)).join('')
+  const segment = ({ o, line, from, to }) => (o === 'h' ? [gx(from), gy(line), gx(to), gy(line)] : [gx(line), gy(from), gx(line), gy(to)])
+  // Pièces de part et d'autre d'une arête (première case du segment)
+  const sides = ({ o, line, from }) => (o === 'h' ? [key(line - 1, from), key(line, from)] : [key(from, line - 1), key(from, line)])
+    .map((k) => roomOf.get(k)).filter(Boolean)
+  const roomLevel = (id) => {
+    const z = info.get(id)
+    return TYPE_LEVEL[z.type] ?? LEVEL_RULES.find(([re]) => re.test(z.name.toLowerCase()))?.[1] ?? 'Vert'
+  }
 
   const out = {
     name: deck.name,
-    width: (maxC - minC) * CELL,
-    height: (maxR - minR) * CELL,
+    width: gx(maxC + 1),
+    height: gy(maxR + 1),
     hull: shape(hull, 0.9),
     engines: shape(engines, 0.6),
     rooms: [],
-    doors: mergeEdges(doorEdges).map(([x1, y1, x2, y2]) => [X(x1), Y(y1), X(x2), Y(y2)]),
-    access: mergeEdges(accessEdges).map(([x1, y1, x2, y2]) => [X(x1), Y(y1), X(x2), Y(y2)]),
-    cameras: [...fill].filter(([k, a]) => a === CAMERA && hull.has(k)).map(([k]) => { const [r, c] = k.split(',').map(Number); return [X(c + 0.5), Y(r + 0.5)] }),
+    doors: mergeEdges(doorEdges).map((e) => {
+      const ids = [...new Set(sides(e))]
+      return {
+        id: `${deck.name}:${e.o}${e.line}:${e.from}-${e.to}`, // stable tant que le plan Excel ne bouge pas
+        seg: segment(e),
+        level: ids.map(roomLevel).reduce(stricterLevel, 'Vert'),
+        rooms: ids.map((id) => { const z = info.get(id); return /^\d/.test(rooms.get(id).code) ? `${rooms.get(id).code} · ${z.label}` : z.label }),
+      }
+    }),
+    access: mergeEdges(accessEdges).map(segment),
+    cameras: [...fill].filter(([k, a]) => a === CAMERA && hull.has(k)).map(([k]) => { const [r, c] = k.split(',').map(Number); return [gx(c + 0.5), gy(r + 0.5)] }),
   }
 
-  for (const room of rooms.values()) {
-    const cells = [...room.cells].map((k) => k.split(',').map(Number))
-    const { type, label } = classify(room.code, room.name)
+  for (const [id, room] of rooms) {
+    const z = info.get(id)
+    const { cells } = z
     // Emplacement du titre : la plus large rangée parmi les deux du haut
-    const top = Math.min(...cells.map(([r]) => r))
     let best = null
-    for (const row of [top, top + 1]) {
+    for (const row of [z.r0, z.r0 + 1]) {
       const cols = cells.filter(([r]) => r === row).map(([, c]) => c).sort((a, b) => a - b)
       let s = cols[0]
       for (let i = 1; i <= cols.length; i++) {
@@ -309,23 +378,38 @@ for (const deck of decks) {
         s = cols[i]
       }
     }
-    const cx = cells.reduce((a, [, c]) => a + c + 0.5, 0) / cells.length
-    const cy = cells.reduce((a, [r]) => a + r + 0.5, 0) / cells.length
+    // Centre : moyenne des centres de cases (en pixels, grille redimensionnée)
+    const cx = cells.reduce((a, [, c]) => a + gx(c + 0.5), 0) / cells.length
+    const cy = cells.reduce((a, [r]) => a + gy(r + 0.5), 0) / cells.length
+    let d = shape(room.cells, 0.3)
+    let title = { x: n((gx(best.s) + gx(best.s + best.w)) / 2), y: gy(best.row + 0.5), w: n(gx(best.s + best.w) - gx(best.s)) }
+    if (HEXAGONS.has(`${deck.name}|${room.code}`)) {
+      // Hexagone régulier, pointe en haut et en bas, côtés verticaux sur l'emprise de la pièce
+      const L = gx(z.c0)
+      const R = gx(z.c1 + 1)
+      const T = gy(z.r0)
+      const B = gy(z.r1 + 1)
+      const i = (R - L) / (2 * Math.sqrt(3))
+      const mid = (L + R) / 2
+      d = roundedPath([[mid, T], [R, T + i], [R, B - i], [mid, B], [L, B - i], [L, T + i]], 0.6)
+      title = { x: n(mid), y: n(T + i + CELL * 0.5), w: n(R - L - CELL * 0.4) }
+    }
     out.rooms.push({
       code: room.code,
-      name: room.name,
-      label,
-      type,
+      name: z.name,
+      label: z.label,
+      type: z.type,
       size: cells.length,
-      d: shape(room.cells, 0.3),
-      title: { x: X(best.s + best.w / 2), y: Y(best.row + 0.5), w: n(best.w * CELL) },
-      center: { x: X(cx), y: Y(cy) },
-      rows: Math.max(...cells.map(([r]) => r)) - top + 1,
+      d,
+      title,
+      center: { x: n(cx), y: n(cy) },
+      rows: z.r1 - z.r0 + 1,
     })
   }
   out.rooms.sort((a, b) => a.code.localeCompare(b.code, 'fr', { numeric: true }))
   plan.decks.push(out)
-  console.log(`Étage ${deck.name} : ${out.rooms.length} pièces, ${out.doors.length} portes, ${out.access.length} accès, ${out.cameras.length} caméras`)
+  const levels = out.doors.reduce((a, d) => ({ ...a, [d.level]: (a[d.level] ?? 0) + 1 }), {})
+  console.log(`Étage ${deck.name} : ${out.width}×${out.height} px, ${out.rooms.length} pièces, ${out.doors.length} portes ${JSON.stringify(levels)}, ${out.access.length} accès, ${out.cameras.length} caméras`)
 }
 
 mkdirSync(new URL('../src/data/', import.meta.url), { recursive: true })
