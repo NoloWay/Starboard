@@ -249,6 +249,7 @@ export function setupShip(ctx) {
   const draw = liveRender(panel, build)
 
   function open() {
+    if (isOpen) return close() // reclic sur « Gaïa » : on ferme le panneau
     ctx.onOpen?.()
     isOpen = true
     panel.hidden = false

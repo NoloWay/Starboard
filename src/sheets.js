@@ -113,6 +113,7 @@ export function setupSheets(ctx) {
   }
 
   function open(id) {
+    if (id === openId) return close() // reclic sur la fiche ouverte : on la ferme
     ctx.onOpen?.()
     if (id !== openId) editing = false
     openId = id
