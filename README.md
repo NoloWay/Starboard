@@ -10,7 +10,7 @@ npm run dev
 Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de salle) pour voir la synchronisation.
 
 ## Utilisation
-- **Onglets Vaisseau / Carte** (en haut) : chacun choisit sa vue. « Vaisseau » = plan du Gaïa, étage par étage (survoler une pièce affiche son nom) ; « Carte » = scènes et cartes importées par le MJ. Chaque vue a ses propres jetons.
+- **Onglets Vaisseau / Carte** (en haut) : chacun choisit sa vue. « Vaisseau » = plan du Gaïa, étage par étage (2 = dômes de verre sur le toit, 1, 0, −1) (survoler une pièce affiche son nom) ; « Carte » = scènes et cartes importées par le MJ. Chaque vue a ses propres jetons.
 - **Plateau** : glisser dans le vide (ou clic milieu) pour déplacer la vue, molette pour zoomer, « Recadrer » pour voir toute la carte. Chacun cadre comme il veut.
 - **Scènes** (MJ, en haut du plateau) : créer une scène, lui donner une image de fond (partagée automatiquement), régler la taille des jetons. La scène choisie par le MJ s'affiche chez tout le monde.
 - **Portes du Gaïa** : cliquer sur une porte affiche le badge requis pour l'ouvrir (modifiable par tous) ; la pastille de la porte a la couleur de ce badge. Le MJ peut imposer un niveau minimal à toutes les portes ou tout réinitialiser (barre en haut du plan).

@@ -412,6 +412,48 @@ for (const deck of decks) {
   console.log(`Étage ${deck.name} : ${out.width}×${out.height} px, ${out.rooms.length} pièces, ${out.doors.length} portes ${JSON.stringify(levels)}, ${out.access.length} accès, ${out.cameras.length} caméras`)
 }
 
+// ---------- Étage 2 : absent de l'Excel ----------
+// Trois dômes de verre alignés sur le toit, au-dessus de la salle de transit 9 de l'étage 1,
+// chacun desservi par sa rampe (9.4 observatoire, 9.1 serre botanique, 9.3 jardin), de gauche à droite
+// dans l'ordre des rampes. Le contour du vaisseau (toit) reprend celui de l'étage 1.
+{
+  const below = plan.decks.find((d) => d.name === '1')
+  const hub = below.rooms.find((r) => r.code === '9') // salle de transit d'où partent les rampes
+  const R = CELL * 4 // rayon d'un dôme
+  const GAP = CELL * 1.5
+  const domes = [
+    { code: '1', name: 'Observatoire', ramp: '9.4' },
+    { code: '2', name: 'Serre botanique', ramp: '9.1' },
+    { code: '3', name: 'Jardin', ramp: '9.3' },
+  ]
+  const circle = (x, y, r) => `M${n(x - r)},${n(y)}A${r},${r},0,1,0,${n(x + r)},${n(y)}A${r},${r},0,1,0,${n(x - r)},${n(y)}Z`
+  const square = (x, y, s) => roundedPath([[x - s / 2, y - s / 2], [x + s / 2, y - s / 2], [x + s / 2, y + s / 2], [x - s / 2, y + s / 2]], 0.3)
+  const rooms = []
+  domes.forEach((dome, i) => {
+    const x = hub.center.x + (i - 1) * (2 * R + GAP)
+    const y = hub.center.y
+    const ramp = below.rooms.find((r) => r.code === dome.ramp)
+    rooms.push({
+      code: dome.code, name: dome.name, label: dome.name, type: 'dome', size: 50,
+      d: circle(x, y, R), circle: { x: n(x), y: n(y), r: R },
+      title: { x: n(x), y: n(y - R + CELL * 1.1), w: n(R * 1.4) }, center: { x: n(x), y: n(y) }, rows: 8,
+    })
+    // Palier de la rampe, en bas du dôme
+    const ry = y + R - CELL * 1.4
+    rooms.push({
+      code: `${dome.code}.1`, name: `${ramp.name} (vers l'étage 1, ${dome.ramp})`, label: `Rampe vers l'étage 1 (${dome.ramp})`,
+      type: 'room', size: 1, d: square(x, ry, CELL * 1.6),
+      title: { x: n(x), y: n(ry), w: CELL }, center: { x: n(x), y: n(ry) }, rows: 1,
+    })
+  })
+  plan.decks.unshift({
+    name: '2', width: below.width, height: below.height,
+    hull: below.hull, engines: below.engines,
+    rooms, doors: [], access: [], cameras: [],
+  })
+  console.log('Étage 2 : 3 dômes de verre (ajoutés, absents de l\'Excel)')
+}
+
 mkdirSync(new URL('../src/data/', import.meta.url), { recursive: true })
 writeFileSync(OUT, JSON.stringify(plan))
 console.log('→ src/data/gaia-plan.json')

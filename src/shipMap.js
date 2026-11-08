@@ -13,6 +13,7 @@ const STYLE = {
   electric: { fill: '#4b4428', text: '#e3d39a' }, // vieux jaune pâle
   ventilation: { fill: '#3b4250', text: '#cfd6e0' }, // gris argenté
   maintenance: { fill: '#1b2236', text: '#8da0c4' },
+  dome: { fill: 'rgba(110, 210, 255, 0.12)', text: '#dff6ff' }, // dômes de verre (étage 2)
 }
 const WALL = 'rgba(56, 232, 255, 0.5)'
 const HULL = 'rgba(56, 232, 255, 0.65)'
@@ -144,6 +145,20 @@ export function drawDeck(g, deckName, zoom, doorLevel = (d) => d.level) {
   g.lineWidth = CELL * 0.07
   g.lineJoin = 'round'
   for (const r of deck.rooms) g.stroke(r.path)
+
+  // Dômes de verre : bord lumineux et reflet
+  for (const { circle: c } of deck.rooms.filter((r) => r.circle)) {
+    g.strokeStyle = 'rgba(160, 230, 255, 0.75)'
+    g.lineWidth = CELL * 0.1
+    g.shadowColor = 'rgba(110, 210, 255, 0.6)'
+    g.shadowBlur = 16
+    g.beginPath(); g.arc(c.x, c.y, c.r, 0, Math.PI * 2); g.stroke()
+    g.shadowBlur = 0
+    g.strokeStyle = 'rgba(255, 255, 255, 0.18)'
+    g.lineWidth = CELL * 0.18
+    g.lineCap = 'round'
+    g.beginPath(); g.arc(c.x, c.y, c.r * 0.82, Math.PI * 1.1, Math.PI * 1.45); g.stroke()
+  }
   g.strokeStyle = HULL
   g.lineWidth = CELL * 0.14
   g.shadowColor = 'rgba(56, 232, 255, 0.35)'
