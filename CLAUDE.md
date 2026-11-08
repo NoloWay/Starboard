@@ -16,11 +16,16 @@ Aucun hébergement payant, aucun serveur à maintenir. Le seul coût accepté es
 ```
 index.html        # structure : barre du haut, canvas, journal
 src/net.js        # connect(roomId) : Y.Doc + Trystero + IndexedDB
-src/main.js       # rendu canvas, pions, dés, journal, export/import
+src/main.js       # rendu canvas, pions, identité/rôle, jets, journal, export/import
+src/rules.js      # règles : caractéristiques, compétences, badges, calcul des scores
+src/dice.js       # jets sous la valeur, critiques, avantage/désavantage
+src/sheets.js     # liste de l'équipage + fiche de personnage (données dans le Y.Doc)
 src/style.css     # thème néon futuriste (variables CSS en tête de fichier)
+scripts/import-excel.mjs  # npm run import-fiches : Excel de references/ → JSON importable
 ```
 - La salle = le hash de l'URL (`/#abc123`). Partager l'URL = inviter.
-- Données partagées : `doc.getMap('tokens')` (id → `{x, y, color, label}`) et `doc.getArray('log')`.
+- Données partagées : `doc.getMap('tokens')` (id → `{x, y, color, label}`), `doc.getArray('log')` (`{who, text, t, secret, roll?}`), `doc.getMap('characters')` (id → Y.Map : champs texte, `hidden`, `player`, `stats` Y.Map `{base, mod}`, `skills` Y.Map nom → niveau, `talents`/`passives` Y.Array `{name, desc}`).
+- Rôle (MJ / joueur) et nom : `localStorage`, par navigateur (rôle par salle). Le MJ voit les fiches cachées et les jets secrets ; une fiche avec un `player` n'est modifiable que par ce joueur et le MJ. Rien n'est réellement secret (tout est dans le Y.Doc de chacun).
 - Toute nouvelle donnée partagée doit vivre dans le `Y.Doc` (jamais dans une variable locale), sinon elle ne se synchronise pas.
 
 ## Direction artistique
@@ -42,11 +47,29 @@ Futuriste / espace : fond très sombre bleu nuit, accents néon cyan (`--accent`
 8. **Cartes / jetons / ressources** (carburant, énergie, etc., selon le jeu).
 9. **Ambiance** : bruitages, musique locale, effets visuels d'alerte.
 
-## Questions ouvertes (à demander à l'utilisateur avant de coder les fonctions liées)
-- Quelles sont les règles originales ? Quelles stats / ressources / jets ? (conditionne fiches et dés)
+## Règles du jeu (source : `references/`, dossier non versionné)
+Univers : équipage du vaisseau scientifique **Gaïa** (Confédération d'Althémion). Le code des règles vit dans `src/rules.js` et `src/dice.js`.
+- **Référence des règles = le PDF « Présentation du JDR Science Fiction »** (choix de l'utilisateur), même quand les Excel diffèrent.
+- **Caractéristiques innées** (/20, 70 points) : Force, Endurance, Adresse (physiques) ; Analyse, Volonté, Intelligence (mentales).
+- **Compétences** (/100) = bonus de niveau (0 à 5 → +0 à +50) + somme des 2 caractéristiques liées (ou caractéristique ×2 si une seule).
+- **Jets** : compétence = 1d100 ≤ score ; caractéristique = 1d20 ≤ valeur (20 = toujours échec).
+  - Critiques d20 : 1 = réussite critique, 20 = échec critique. Critiques d100 : 1-5 réussite critique, 96-100 échec critique.
+  - Avantage / désavantage : 2 dés, on garde le meilleur / le pire. Un critique est prioritaire sur un jet normal. Réussite critique + échec critique sur les 2 dés : afficher les deux.
+- **États passifs** : bonus/malus sur les caractéristiques (rarement sur les compétences), avantages/désavantages.
+- **Badges d'accréditation** : Rouge, Gris, Noir, Bleu, Orange, Violet, Jaune, Rose, Vert.
+- **Personnages joueurs** : Arkhelos Philia, Emelisa Breaenna, Cal Atilkis, Zadya Alipha, Mulgan (certains sans fiche Excel). Les autres fiches sont des PNJ.
+- **MJ** : une autre personne que l'utilisateur (l'utilisateur est joueur et seul développeur).
+- **Gestion du vaisseau et des ressources** (« Excel de gestion du RP », ancienne version mais mécaniques toujours valables) : énergie des générateurs répartie entre systèmes, état des systèmes, stats du vaisseau, vivres/munitions/matériel médical, plan du vaisseau sur 4 étages (2, 1, 0, -1).
+
+### Écarts relevés entre le PDF et les fiches Excel (on suit le PDF)
+- **Linguistique** : PDF = Analyse + Intelligence ; Excel = Intelligence + Volonté.
+- **Perspicacité** : PDF = Analyse + Volonté ; Excel = Intelligence + Analyse.
+- **Électronique** (Intelligence + Adresse) : présente dans le PDF, absente des fiches Excel (importée au niveau 0).
+- **Niveau 3** : « Connaissance » dans le PDF, « Compétence » dans les Excel.
+- L'exemple du PDF cite « Arme à feu (Adresse + Perception) » alors que la liste dit « Arme de tir (Adresse + Volonté) » et qu'il n'existe pas de caractéristique « Perception ».
+
+## Questions ouvertes
 - Quel type de plateau : grille carrée, hexagones, carte libre, plusieurs vues (vaisseau + carte stellaire) ?
-- Le MJ doit-il pouvoir cacher des informations (pions, zones, jets) ?
-- Faut-il garder l'historique de la campagne entre les séances (oui probablement : IndexedDB + export JSON) ?
 
 ## Limites techniques connues
 - Dans de rares cas (réseau d'entreprise, certaines 4G) la connexion directe WebRTC échoue : prévoir un relais TURN gratuit (Cloudflare / Metered) dans la config Trystero (`rtcConfig`) si ça arrive.

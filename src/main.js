@@ -1,4 +1,6 @@
 import { connect } from './net.js'
+import { roll, rollFree, OUTCOME_LABEL, MODE_LABEL } from './dice.js'
+import { setupSheets, replaceCharacters } from './sheets.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -6,21 +8,32 @@ if (!location.hash.slice(1)) {
 }
 const roomId = location.hash.slice(1)
 
-let playerName = localStorage.getItem('starboard:name')
-if (!playerName) {
-  playerName = prompt('Ton nom de joueur ?') || 'Anonyme'
-  localStorage.setItem('starboard:name', playerName)
+const $ = (id) => document.getElementById(id)
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) } catch { return null } },
+  set: (k, v) => { try { localStorage.setItem(k, v) } catch { /* stockage indisponible */ } },
 }
 
-const $ = (id) => document.getElementById(id)
+let playerName = store.get('starboard:name')
+if (!playerName) {
+  playerName = prompt('Ton nom de joueur ?') || 'Anonyme'
+  store.set('starboard:name', playerName)
+}
+// Le rôle est propre à chaque salle (on peut être MJ d'une partie et joueur d'une autre)
+const roleKey = `starboard:role:${roomId}`
+let role = store.get(roleKey) === 'gm' ? 'gm' : 'player'
+const me = () => ({ name: playerName, isGM: role === 'gm' })
+
 $('room-label').textContent = `Salle : ${roomId}`
+$('btn-name').textContent = playerName
+$('role-select').value = role
 
 // ---------- État partagé ----------
 const { doc } = connect(roomId, {
   onPeers: (n) => ($('peer-count').textContent = `${n} pair${n > 1 ? 's' : ''}`),
 })
 const tokens = doc.getMap('tokens') // id -> { x, y, color, label }
-const log = doc.getArray('log') //     [{ who, text, t }]
+const log = doc.getArray('log') //     [{ who, text, t, secret?, roll? }]
 
 // ---------- Rendu ----------
 const canvas = $('board')
@@ -96,7 +109,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (t) tokens.set(dragId, { ...t, x: p.x + offset.x, y: p.y + offset.y })
 })
 
-function endDrag(e) {
+function endDrag() {
   if (!dragId) return
   const t = tokens.get(dragId)
   if (t) {
@@ -132,30 +145,101 @@ canvas.addEventListener('dblclick', (e) => {
   })
 })
 
-// ---------- Dés & journal ----------
-function roll(sides) {
-  const value = 1 + Math.floor(Math.random() * sides)
-  log.push([{ who: playerName, text: `d${sides} → ${value}`, t: Date.now() }])
+// ---------- Jets ----------
+let rollMode = 'normal'
+$('roll-mode').addEventListener('click', (e) => {
+  const mode = e.target.dataset?.mode
+  if (!mode) return
+  rollMode = mode
+  $('roll-mode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode))
+})
+
+const isSecret = () => $('secret-roll').checked
+
+function pushLog(entry) {
+  log.push([{ who: playerName, t: Date.now(), secret: isSecret(), ...entry }])
 }
-$('btn-d6').addEventListener('click', () => roll(6))
-$('btn-d20').addEventListener('click', () => roll(20))
+
+// Jet libre (sans cible)
+function rollPlain(sides) {
+  pushLog({ text: `d${sides} → ${rollFree(sides)}` })
+}
+$('btn-d6').addEventListener('click', () => rollPlain(6))
+$('btn-d20').addEventListener('click', () => rollPlain(20))
+$('btn-d100').addEventListener('click', () => rollPlain(100))
+
+// Jet depuis une fiche (caractéristique en d20, compétence en d100)
+function rollCheck(character, label, target, sides) {
+  const r = roll(sides, target, rollMode)
+  pushLog({
+    text: `${character.get('name')} · ${label}`,
+    roll: { sides, target, mode: r.mode, values: r.values, kept: r.kept, outcome: r.outcome },
+  })
+}
+
+// ---------- Journal ----------
+const canSeeEntry = (entry) => !entry.secret || role === 'gm' || entry.who === playerName
 
 function renderLog() {
   const ul = $('log-list')
   ul.innerHTML = ''
-  log.toArray().slice(-100).reverse().forEach((entry) => {
+  log.toArray().filter(canSeeEntry).slice(-100).reverse().forEach((entry) => {
     const li = document.createElement('li')
+    if (entry.secret) li.classList.add('secret')
     const b = document.createElement('b')
     b.textContent = entry.who
     li.append(b, ` ${entry.text}`)
+    if (entry.secret) li.title = 'Jet secret : visible par son auteur et le MJ'
+
+    const r = entry.roll
+    if (r) {
+      li.classList.add(`outcome-${r.outcome}`)
+      const detail = document.createElement('div')
+      detail.className = 'roll-detail'
+      const mode = MODE_LABEL[r.mode] ? ` (${MODE_LABEL[r.mode]})` : ''
+      const dice = r.values.length > 1 ? `${r.values.join(' / ')}` : `${r.values[0]}`
+      detail.textContent = `1d${r.sides} ≤ ${r.target}${mode} : ${dice}`
+      const res = document.createElement('div')
+      res.className = 'roll-result'
+      res.textContent = OUTCOME_LABEL[r.outcome] + (r.kept != null && r.values.length > 1 ? ` (${r.kept})` : '')
+      li.append(detail, res)
+    }
     ul.append(li)
   })
 }
 log.observe(renderLog)
 
+// ---------- Fiches ----------
+const sheets = setupSheets({ doc, me, onRoll: rollCheck })
+
+// ---------- Identité : nom & rôle ----------
+$('btn-name').addEventListener('click', () => {
+  const name = prompt('Ton nom de joueur ?', playerName)?.trim()
+  if (!name) return
+  playerName = name
+  store.set('starboard:name', name)
+  $('btn-name').textContent = name
+  renderLog()
+  sheets.rerender()
+})
+
+$('role-select').addEventListener('change', (e) => {
+  role = e.target.value
+  store.set(roleKey, role)
+  document.body.classList.toggle('is-gm', role === 'gm')
+  renderLog()
+  sheets.rerender()
+})
+document.body.classList.toggle('is-gm', role === 'gm')
+
 // ---------- Export / import JSON ----------
 $('btn-export').addEventListener('click', () => {
-  const data = { version: 1, tokens: tokens.toJSON(), log: log.toJSON() }
+  const data = {
+    version: 2,
+    tokens: tokens.toJSON(),
+    log: log.toJSON(),
+    characters: doc.getMap('characters').toJSON(),
+  }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
@@ -164,17 +248,34 @@ $('btn-export').addEventListener('click', () => {
   URL.revokeObjectURL(a.href)
 })
 
+// Seules les parties présentes dans le fichier sont remplacées
+// (un fichier qui ne contient que des fiches ne touche pas aux pions ni au journal).
 $('file-import').addEventListener('change', async (e) => {
   const file = e.target.files[0]
-  if (!file) return
-  const data = JSON.parse(await file.text())
-  doc.transact(() => {
-    tokens.clear()
-    Object.entries(data.tokens ?? {}).forEach(([id, t]) => tokens.set(id, t))
-    log.delete(0, log.length)
-    log.push(data.log ?? [])
-  })
   e.target.value = ''
+  if (!file) return
+  let data
+  try {
+    data = JSON.parse(await file.text())
+  } catch {
+    alert('Fichier JSON illisible.')
+    return
+  }
+  const parts = ['tokens', 'log', 'characters'].filter((k) => data[k])
+  const names = { tokens: 'pions', log: 'journal', characters: 'fiches' }
+  if (!parts.length) return alert('Aucune donnée Starboard dans ce fichier.')
+  if (!confirm(`Remplacer pour tout le monde : ${parts.map((k) => names[k]).join(', ')} ?`)) return
+  doc.transact(() => {
+    if (data.tokens) {
+      tokens.clear()
+      Object.entries(data.tokens).forEach(([id, t]) => tokens.set(id, t))
+    }
+    if (data.log) {
+      log.delete(0, log.length)
+      log.push(data.log)
+    }
+  })
+  if (data.characters) replaceCharacters(doc, data.characters)
 })
 
 // ---------- Démarrage ----------

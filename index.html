@@ -13,10 +13,28 @@
         <span id="room-label">—</span>
         <span id="peer-count">0 pair</span>
       </div>
+      <div class="identity">
+        <button id="btn-name" class="link" title="Changer de nom">—</button>
+        <select id="role-select" title="Rôle">
+          <option value="player">Joueur</option>
+          <option value="gm">MJ</option>
+        </select>
+      </div>
       <div class="tools">
+        <div class="seg" id="roll-mode" title="Mode des jets">
+          <button data-mode="normal" class="on">Normal</button>
+          <button data-mode="adv">Avantage</button>
+          <button data-mode="dis">Désavantage</button>
+        </div>
+        <label class="check" title="Jet visible seulement par toi et le MJ">
+          <input type="checkbox" id="secret-roll" /> Jet secret
+        </label>
+        <span class="sep"></span>
         <button id="btn-add">+ Pion</button>
         <button id="btn-d6">d6</button>
         <button id="btn-d20">d20</button>
+        <button id="btn-d100">d100</button>
+        <span class="sep"></span>
         <button id="btn-export">Exporter</button>
         <label class="btn" for="file-import">Importer</label>
         <input id="file-import" type="file" accept="application/json" hidden />
@@ -24,7 +42,14 @@
     </header>
 
     <main>
-      <canvas id="board"></canvas>
+      <aside class="crew">
+        <h2>Équipage <button id="btn-new-sheet" class="small">+ Fiche</button></h2>
+        <ul id="crew-list"></ul>
+      </aside>
+      <div class="stage">
+        <canvas id="board"></canvas>
+        <section id="sheet" class="sheet" hidden></section>
+      </div>
       <aside class="log">
         <h2>Journal</h2>
         <ul id="log-list"></ul>
