@@ -1,6 +1,7 @@
 import { connect } from './net.js'
 import { roll, rollFree, OUTCOME_LABEL, MODE_LABEL } from './dice.js'
 import { setupSheets, replaceCharacters } from './sheets.js'
+import { setupShip, writeShip } from './shipPanel.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -168,11 +169,11 @@ $('btn-d6').addEventListener('click', () => rollPlain(6))
 $('btn-d20').addEventListener('click', () => rollPlain(20))
 $('btn-d100').addEventListener('click', () => rollPlain(100))
 
-// Jet depuis une fiche (caractéristique en d20, compétence en d100)
-function rollCheck(character, label, target, sides) {
+// Jet contre une valeur (caractéristique ou stat du vaisseau en d20, compétence en d100)
+function rollCheck(label, target, sides) {
   const r = roll(sides, target, rollMode)
   pushLog({
-    text: `${character.get('name')} · ${label}`,
+    text: label,
     roll: { sides, target, mode: r.mode, values: r.values, kept: r.kept, outcome: r.outcome },
   })
 }
@@ -209,8 +210,9 @@ function renderLog() {
 }
 log.observe(renderLog)
 
-// ---------- Fiches ----------
-const sheets = setupSheets({ doc, me, onRoll: rollCheck })
+// ---------- Fiches & vaisseau (un seul panneau ouvert à la fois) ----------
+const sheets = setupSheets({ doc, me, onRoll: rollCheck, onOpen: () => ship.close() })
+const ship = setupShip({ doc, me, onRoll: rollCheck, onOpen: () => sheets.close() })
 
 // ---------- Identité : nom & rôle ----------
 $('btn-name').addEventListener('click', () => {
@@ -221,6 +223,7 @@ $('btn-name').addEventListener('click', () => {
   $('btn-name').textContent = name
   renderLog()
   sheets.rerender()
+  ship.rerender()
 })
 
 $('role-select').addEventListener('change', (e) => {
@@ -229,6 +232,7 @@ $('role-select').addEventListener('change', (e) => {
   document.body.classList.toggle('is-gm', role === 'gm')
   renderLog()
   sheets.rerender()
+  ship.rerender()
 })
 document.body.classList.toggle('is-gm', role === 'gm')
 
@@ -239,6 +243,7 @@ $('btn-export').addEventListener('click', () => {
     tokens: tokens.toJSON(),
     log: log.toJSON(),
     characters: doc.getMap('characters').toJSON(),
+    ship: doc.getMap('ship').toJSON(),
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
@@ -261,8 +266,8 @@ $('file-import').addEventListener('change', async (e) => {
     alert('Fichier JSON illisible.')
     return
   }
-  const parts = ['tokens', 'log', 'characters'].filter((k) => data[k])
-  const names = { tokens: 'pions', log: 'journal', characters: 'fiches' }
+  const parts = ['tokens', 'log', 'characters', 'ship'].filter((k) => data[k] && Object.keys(data[k]).length)
+  const names = { tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau' }
   if (!parts.length) return alert('Aucune donnée Starboard dans ce fichier.')
   if (!confirm(`Remplacer pour tout le monde : ${parts.map((k) => names[k]).join(', ')} ?`)) return
   doc.transact(() => {
@@ -275,7 +280,8 @@ $('file-import').addEventListener('change', async (e) => {
       log.push(data.log)
     }
   })
-  if (data.characters) replaceCharacters(doc, data.characters)
+  if (parts.includes('characters')) replaceCharacters(doc, data.characters)
+  if (parts.includes('ship')) writeShip(doc, data.ship)
 })
 
 // ---------- Démarrage ----------

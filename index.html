@@ -43,12 +43,21 @@
 
     <main>
       <aside class="crew">
+        <h2>Vaisseau</h2>
+        <ul>
+          <li id="ship-item" class="crew-item ship-item">
+            <span class="badge-dot" style="--badge: var(--accent)"></span>
+            <span class="crew-name">Gaïa</span>
+            <span id="ship-summary" class="crew-post">—</span>
+          </li>
+        </ul>
         <h2>Équipage <button id="btn-new-sheet" class="small">+ Fiche</button></h2>
         <ul id="crew-list"></ul>
       </aside>
       <div class="stage">
         <canvas id="board"></canvas>
         <section id="sheet" class="sheet" hidden></section>
+        <section id="ship-panel" class="sheet ship" hidden></section>
       </div>
       <aside class="log">
         <h2>Journal</h2>

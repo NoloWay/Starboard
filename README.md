@@ -15,6 +15,7 @@ Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de s
 - **Équipage** (à gauche) : cliquer sur un personnage pour ouvrir sa fiche. Les scores se calculent seuls ; cliquer sur un score lance le dé (1d20 caractéristique, 1d100 compétence).
 - **Normal / Avantage / Désavantage** et **Jet secret** (visible seulement par toi et le MJ) s'appliquent aux jets suivants.
 - **Fiches** : le MJ peut cacher une fiche aux joueurs. Le champ « Joueur » réserve la modification au joueur de ce nom (et au MJ).
+- **Vaisseau** (en haut à gauche, « Gaïa ») : énergie, systèmes, statistiques, générateurs, ressources, vivres et armement. La première fois, cliquer sur « Initialiser le Gaïa ». Les joueurs pilotent (états, énergie, stocks) ; dégâts, production et stats de base sont réservés au MJ.
 - **d6 / d20 / d100** : jets libres, visibles dans le journal de tous.
 - **Importer les fiches Excel** : mettre les Excel dans `references/`, lancer `npm run import-fiches`, puis importer `references/fiches-starboard.json` avec le bouton **Importer**.
 - **Exporter / Importer** : sauvegarde et reprise de la partie en fichier JSON.

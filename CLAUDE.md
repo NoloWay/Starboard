@@ -68,6 +68,22 @@ Univers : équipage du vaisseau scientifique **Gaïa** (Confédération d'Althé
 - **Niveau 3** : « Connaissance » dans le PDF, « Compétence » dans les Excel.
 - L'exemple du PDF cite « Arme à feu (Adresse + Perception) » alors que la liste dit « Arme de tir (Adresse + Volonté) » et qu'il n'existe pas de caractéristique « Perception ».
 
+### Vaisseau (`src/shipRules.js` pour les calculs, `src/shipPanel.js` pour l'interface)
+Données : `doc.getMap('ship')` = sous-Y.Map `generators`, `systems`, `stats`, `supplies` (id → objet) + valeurs simples (`hull`, `aphirium`, `lythrium`, `waterEfficiency`, `waterRatio`, `crewLarge`, `crewSmall`, `situation`). Valeurs de départ dans `defaultShip()`.
+- **Énergie** : principaux 4 × 10, secondaires 2 × 5, rechange 4 (s'il est connecté), en marche seulement. Disponible = produite − énergie allouée aux systèmes en marche.
+- **Malus des stats (/20)** : défaillance = moyenne des dégâts (1 − intégrité) + moyenne du manque d'énergie, ×20 puis tronqué. Navigation ← ordinateur Astréos ; Vitesse ← propulseurs Héra ; Manoeuvrabilité ← propulseurs secondaires ; Détection et Ciblage ← radar ; Résistance ← (1 − coque) × 5. Situation « Agitée » : −1 en navigation.
+- **Lythrium** : consommation par jour = énergie utilisée. **Eau** : ratio × 2 × équipage × k + 7 × équipage × (k × 0,6 si recyclage, sinon 1), avec k = efficacité du traitement si l'hydro-purification tourne. **Nourriture** : 3 portions/jour (grande portion), 2 (petite).
+- Droits : joueurs = état et énergie des systèmes, état des générateurs, carburants, équipage, inventaire ; MJ seul = production, intégrité, optimisations, niveaux tech, stats de base/bonus, coque, ratio et efficacité de l'eau, situation.
+
+Interprétations et écarts par rapport à l'Excel de gestion :
+- Autonomie en nourriture = stock / consommation par jour (l'Excel divisait par le nombre de passagers, ce qui semblait être une erreur).
+- La navigation et la détection subissent aussi les dégâts et le manque d'énergie, comme les propulseurs (l'Excel ne regardait que « en marche / arrêté »).
+- Ciblage dépend du radar comme dans l'Excel (pas des tourelles).
+- « Opti. techno. » et « Niveau tech » sont affichés et modifiables mais n'entrent dans aucun calcul (l'Excel ne les utilisait pas) : à préciser.
+- Les générateurs tertiaires (infirmerie, passerelle, 3 pts) n'alimentent pas le réseau principal.
+- Jets de vaisseau : 1d20 ≤ stat (supposé, à confirmer).
+- Inventaire de départ = quantités de l'Excel (ancienne campagne), à ajuster par le MJ.
+
 ## Questions ouvertes
 - Quel type de plateau : grille carrée, hexagones, carte libre, plusieurs vues (vaisseau + carte stellaire) ?
 

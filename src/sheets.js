@@ -1,4 +1,5 @@
 import * as Y from 'yjs'
+import { h } from './dom.js'
 import {
   STATS, STAT_POINTS, STAT_MAX, LEVELS, SKILLS, SKILL_GROUPS, BADGES,
   BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel,
@@ -22,20 +23,6 @@ const LISTS = [
   ['talents', 'Talents spéciaux'],
   ['passives', 'États passifs'],
 ]
-
-/** Petit utilitaire de création d'éléments DOM. */
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag)
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v == null || v === false) continue
-    if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
-    else if (k === 'class') el.className = v
-    else if (k in el && k !== 'list') el[k] = v
-    else el.setAttribute(k, v)
-  }
-  el.append(...children.flat().filter((c) => c != null && c !== false))
-  return el
-}
 
 // ---------- Données (Y.Doc) ----------
 
@@ -73,7 +60,7 @@ export function replaceCharacters(doc, json) {
 
 /**
  * Liste de l'équipage (barre latérale) + fiche détaillée.
- * ctx : { doc, me() -> { name, isGM }, onRoll(character, label, target, sides), mode() }
+ * ctx : { doc, me() -> { name, isGM }, onRoll(label, target, sides), onOpen() }
  */
 export function setupSheets(ctx) {
   const characters = ctx.doc.getMap('characters')
@@ -122,6 +109,7 @@ export function setupSheets(ctx) {
   }
 
   function open(id) {
+    ctx.onOpen?.()
     openId = id
     sheetEl.hidden = false
     build()
@@ -166,7 +154,7 @@ export function setupSheets(ctx) {
         bind(h('input', { type: 'number', min: -20, max: 20, class: 'mod', title: 'Bonus / malus (états passifs)', onchange: setStat('mod') }), () => stats.get(key).mod),
         bind(h('button', {
           class: 'roll-btn', title: 'Jet de caractéristique (1d20)',
-          onclick: () => ctx.onRoll(c, label, statValue(stats.toJSON(), key), 20),
+          onclick: () => ctx.onRoll(`${c.get('name')} · ${label}`, statValue(stats.toJSON(), key), 20),
         }), () => statValue(stats.toJSON(), key)),
       )
     }
@@ -177,7 +165,7 @@ export function setupSheets(ctx) {
         LEVELS.map((l, i) => h('option', { value: i }, `${i} · ${l}`))), () => String(skills.get(skill.name) ?? 0)),
       bind(h('button', {
         class: 'roll-btn', title: `Jet de compétence (1d100) · ${skillStatsLabel(skill)}`,
-        onclick: () => ctx.onRoll(c, skill.name, skillValue(skill, stats.toJSON(), skills.get(skill.name)), 100),
+        onclick: () => ctx.onRoll(`${c.get('name')} · ${skill.name}`, skillValue(skill, stats.toJSON(), skills.get(skill.name)), 100),
       }), () => skillValue(skill, stats.toJSON(), skills.get(skill.name))),
     )
 
@@ -280,6 +268,7 @@ export function setupSheets(ctx) {
   })
 
   return {
+    close() { if (openId) close() },
     /** À appeler quand le rôle ou le nom change */
     rerender() {
       renderList()
