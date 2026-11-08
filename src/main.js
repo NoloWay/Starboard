@@ -3,6 +3,7 @@ import { roll, rollFree, OUTCOME_LABEL, MODE_LABEL } from './dice.js'
 import { setupSheets, replaceCharacters } from './sheets.js'
 import { setupShip, writeShip } from './shipPanel.js'
 import { setupBoard } from './board.js'
+import { setupMusic } from './music.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -39,6 +40,7 @@ const log = doc.getArray('log') //     [{ who, text, t, secret?, roll? }]
 
 // ---------- Plateau (scènes, caméra, pions) ----------
 const board = setupBoard({ doc, me })
+const music = setupMusic({ doc, me })
 
 $('btn-add').addEventListener('click', () => {
   const label = prompt('Nom du pion (2-3 lettres) ?', playerName.slice(0, 2).toUpperCase())
@@ -133,6 +135,7 @@ $('role-select').addEventListener('change', (e) => {
   sheets.rerender()
   ship.rerender()
   board.rerender()
+  music.rerender()
 })
 document.body.classList.toggle('is-gm', role === 'gm')
 
@@ -144,6 +147,7 @@ $('btn-export').addEventListener('click', () => {
     tokens: tokens.toJSON(),
     log: log.toJSON(),
     characters: doc.getMap('characters').toJSON(),
+    musicTracks: doc.getMap('musicTracks').toJSON(),
     ship: doc.getMap('ship').toJSON(),
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -167,8 +171,8 @@ $('file-import').addEventListener('change', async (e) => {
     alert('Fichier JSON illisible.')
     return
   }
-  const parts = ['scenes', 'tokens', 'log', 'characters', 'ship'].filter((k) => data[k] && Object.keys(data[k]).length)
-  const names = { scenes: 'scènes et cartes', tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau' }
+  const parts = ['scenes', 'tokens', 'log', 'characters', 'ship', 'musicTracks'].filter((k) => data[k] && Object.keys(data[k]).length)
+  const names = { scenes: 'scènes et cartes', tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau', musicTracks: 'pistes de musique' }
   if (!parts.length) return alert('Aucune donnée Starboard dans ce fichier.')
   if (!confirm(`Remplacer pour tout le monde : ${parts.map((k) => names[k]).join(', ')} ?`)) return
   if (parts.includes('scenes')) board.importData(data)
@@ -184,6 +188,10 @@ $('file-import').addEventListener('change', async (e) => {
   })
   if (parts.includes('characters')) replaceCharacters(doc, data.characters)
   if (parts.includes('ship')) writeShip(doc, data.ship)
+  if (parts.includes('musicTracks')) {
+    const tracks = doc.getMap('musicTracks')
+    doc.transact(() => { tracks.clear(); Object.entries(data.musicTracks).forEach(([id, t]) => tracks.set(id, t)) })
+  }
 })
 
 // ---------- Démarrage ----------

@@ -13,6 +13,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -280,3 +281,21 @@ input.num { font-variant-numeric: tabular-nums; }
 .outcome-crit-success .roll-result { color: var(--ok); text-shadow: 0 0 8px var(--ok); text-transform: uppercase; }
 .outcome-crit-fail .roll-result { color: var(--danger); text-shadow: 0 0 8px var(--danger); text-transform: uppercase; }
 .outcome-both-crits .roll-result { color: var(--warn); text-shadow: 0 0 8px var(--warn); text-transform: uppercase; }
+
+/* ---------- Musique ---------- */
+.music { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.music h2 { margin: 0; }
+.music-player { border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #000; }
+.music-player iframe { display: block; }
+.music-title { font-size: 0.85rem; color: var(--accent); overflow-wrap: anywhere; }
+.music-controls { display: flex; flex-direction: column; gap: 6px; }
+.music-controls:empty { display: none; }
+.music-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.music-url { flex: 1; min-width: 0; }
+.volume input { flex: 1; accent-color: var(--accent); }
+.music-unlock { color: var(--bg); background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.small-text { font-size: 0.75rem; margin: 0; }
+.log ul.music-tracks { font-size: 0.8rem; }
+.log .music-tracks li { display: flex; justify-content: space-between; align-items: center; padding: 0; border: none; }
+.music-tracks button.link { color: var(--text); text-align: left; padding: 2px 0; }
+.music-tracks button.link.current { color: var(--accent); }

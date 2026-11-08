@@ -19,6 +19,7 @@ src/net.js        # connect(roomId) : Y.Doc + Trystero + IndexedDB
 src/main.js       # identité/rôle, jets, journal, export/import (assemble les modules)
 src/board.js      # plateau : scènes, image de fond partagée, caméra locale (pan/zoom), pions
 src/dom.js        # utilitaire h() pour créer des éléments
+src/music.js      # musique d'ambiance YouTube synchronisée (lecteur IFrame officiel, gratuit, sans compte)
 src/rules.js      # règles : caractéristiques, compétences, badges, calcul des scores
 src/dice.js       # jets sous la valeur, critiques, avantage/désavantage
 src/sheets.js     # liste de l'équipage + fiche de personnage (données dans le Y.Doc)
@@ -27,6 +28,7 @@ scripts/import-excel.mjs  # npm run import-fiches : Excel de references/ → JSO
 scripts/plan-vaisseau.mjs # npm run plan-vaisseau : feuille « Map » de l'Excel de gestion → un SVG par étage
 ```
 - Plateau : `doc.getMap('scenes')` (id → `{name, order, image, width, height, grid, showGrid}`), `doc.getMap('images')` (id → `{type, data: Uint8Array}`, WebP ≤ 4096 px), `doc.getMap('board').get('scene')` = scène affichée chez tous (choisie par le MJ). Les pions ont un champ `scene` (absent = scène `main`). La caméra est locale à chaque joueur. L'export JSON encode les images en base64.
+- Musique : `doc.getMap('music')` = `{videoId, playing, startedAt, position, loop}` (chaque client calcule la position attendue depuis `startedAt` et se recale au-delà de 2 s), `doc.getMap('musicTracks')` = pistes enregistrées par le MJ. Volume personnel en localStorage. Le lecteur reste visible (≥ 200 × 200 px, exigence des conditions YouTube). Les navigateurs peuvent bloquer la lecture automatique : un bouton « Activer la musique » apparaît alors. Certaines vidéos refusent l'intégration (erreurs 101/150).
 - Plan Excel : remplissage noir = vide spatial, gris = sols, bordures noires moyennes = murs, bordures rouges = portes, bordures jaunes = accès techniques (gaines électriques, ventilation), cases orange = caméras de surveillance. Sens inconnu : bordures cyan épaisses (autour de la proue, rendues en vert), bordures bleues/grises fines et cases bleues (arrière, propulseurs ?). Cases de 24 px → régler « Case » à 24 dans la scène.
 - La salle = le hash de l'URL (`/#abc123`). Partager l'URL = inviter.
 - Données partagées : `doc.getMap('tokens')` (id → `{x, y, color, label}`), `doc.getArray('log')` (`{who, text, t, secret, roll?}`), `doc.getMap('characters')` (id → Y.Map : champs texte, `hidden`, `player`, `stats` Y.Map `{base, mod}`, `skills` Y.Map nom → niveau, `talents`/`passives` Y.Array `{name, desc}`).
