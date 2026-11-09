@@ -13,6 +13,7 @@ const TOOLS = [
   ['ngon', '⬡', 'Polygone régulier : glisser du centre vers un sommet'],
   ['triangle', '△', 'Triangle : glisser du centre vers un sommet'],
   ['circle', '◯', 'Cercle : glisser du centre vers le bord'],
+  ['poly', '✎', 'Polyligne : cliquer pour poser chaque sommet, puis recliquer sur le premier (ou Entrée, double-clic) pour refermer'],
   ['door', '⊟', 'Porte : glisser le long du mur'],
   ['camera', '◉', 'Caméra : cliquer pour la poser, puis l’orienter avec sa poignée'],
 ]
@@ -110,7 +111,7 @@ export function setupPlanEditor(ctx) {
     tools.innerHTML = ''
     add(tools,
       h('div', { class: 'tool-row' }, TOOLS.map(([k, icon, title]) => h('button', {
-        class: `tool${tool === k ? ' on' : ''}`, title, onclick: () => { tool = k; renderTools() },
+        class: `tool${tool === k ? ' on' : ''}`, title, onclick: () => { tool = k; draft = null; renderTools(); ctx.draw() },
       }, icon))),
       tool === 'ngon' && h('label', { class: 'check' }, 'Côtés',
         h('input', { type: 'number', min: 3, max: 12, value: sides, class: 'num', onchange: (e) => { sides = Math.max(3, Math.min(12, Number(e.target.value) || 6)) } })),
@@ -256,9 +257,47 @@ export function setupPlanEditor(ctx) {
   }
 
   // ---------- Souris (appelé par le plateau ; renvoie true si l'éditeur prend la main) ----------
+  // ---------- Polyligne : sommets posés un à un, refermée sur le premier point ----------
+  let draft = null // { pts: [[x, y]…], cursor: { x, y } }
+
+  /** Point suivant de la polyligne ; avec des côtés droits, aligné sur le précédent (horizontal ou vertical). */
+  function nextPoint(p) {
+    const last = draft?.pts.at(-1)
+    if (!ortho || !last) return p
+    return Math.abs(p.x - last[0]) > Math.abs(p.y - last[1]) ? { x: p.x, y: last[1] } : { x: last[0], y: p.y }
+  }
+  const nearFirst = (p) => draft?.pts.length >= 3 && Math.hypot(p.x - draft.pts[0][0], p.y - draft.pts[0][1]) <= 10 / ctx.zoom()
+
+  function closeDraft() {
+    if (draft?.pts.length >= 3) {
+      const id = crypto.randomUUID()
+      set(id, { deck: ctx.deck(), kind: 'shape', type: 'room', code: '', name: 'Nouvelle pièce', icon: '', radius: 0.3, z: Math.max(0, ...shapesZ()) + 1, pts: draft.pts })
+      tool = 'select'
+      renderTools()
+      draft = null
+      select(id)
+    }
+  }
+
+  /** Survol (sans bouton) : aperçu du prochain côté de la polyligne. */
+  function hover(w, e) {
+    if (!active || tool !== 'poly' || !draft) return
+    draft.cursor = snap(w, e.altKey)
+    ctx.draw()
+  }
+
   function pointerDown(w, e) {
     if (!active || e.button !== 0) return false
     const p = snap(w, e.altKey)
+    if (tool === 'poly') {
+      if (nearFirst(w)) { closeDraft(); return true }
+      draft ??= { pts: [], cursor: p }
+      const q = nextPoint(p)
+      const last = draft.pts.at(-1)
+      if (!last || last[0] !== q.x || last[1] !== q.y) draft.pts.push([round(q.x), round(q.y)]) // pas de doublon (double-clic)
+      ctx.draw()
+      return true
+    }
     if (tool !== 'select') {
       action = { kind: 'create', from: p, to: p, free: e.altKey }
       return true
@@ -313,6 +352,7 @@ export function setupPlanEditor(ctx) {
 
   /** Double-clic : sur un sommet, le retire ; sur le milieu d'un côté, y ajoute un sommet. */
   function dblclick(w) {
+    if (active && tool === 'poly') return closeDraft()
     const it = active && selected && get(selected)
     if (!it?.pts) return
     const tol = 9 / ctx.zoom()
@@ -347,6 +387,23 @@ export function setupPlanEditor(ctx) {
         g.strokeRect(hd.x - 4 * px, hd.y - 4 * px, 8 * px, 8 * px)
       }
     }
+    if (draft?.pts.length) {
+      const cur = nextPoint(draft.cursor)
+      const closing = nearFirst(draft.cursor)
+      g.strokeStyle = '#38e8ff'
+      g.lineWidth = 2 * px
+      g.beginPath()
+      draft.pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)))
+      g.stroke()
+      g.setLineDash([6 * px, 4 * px])
+      g.beginPath(); g.moveTo(...draft.pts.at(-1)); g.lineTo(closing ? draft.pts[0][0] : cur.x, closing ? draft.pts[0][1] : cur.y); g.stroke()
+      g.setLineDash([])
+      for (const [x, y] of draft.pts) { g.fillStyle = '#eaf6ff'; g.fillRect(x - 3 * px, y - 3 * px, 6 * px, 6 * px) }
+      // Premier point : cercle d'accroche, plus visible quand le curseur peut refermer
+      g.strokeStyle = closing ? '#ff3dd8' : '#38e8ff'
+      g.lineWidth = (closing ? 3 : 1.5) * px
+      g.beginPath(); g.arc(draft.pts[0][0], draft.pts[0][1], 9 * px, 0, Math.PI * 2); g.stroke()
+    }
     if (action?.kind === 'create') {
       const preview = created(action.from, action.to, action.free)
       if (preview) {
@@ -363,6 +420,14 @@ export function setupPlanEditor(ctx) {
   // ---------- Clavier ----------
   addEventListener('keydown', (e) => {
     if (!active || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return
+    if (draft) { // polyligne en cours : Entrée referme, Retour arrière retire le dernier point, Échap abandonne
+      if (e.key === 'Enter') closeDraft()
+      else if (e.key === 'Backspace') { draft.pts.pop(); if (!draft.pts.length) draft = null; ctx.draw() }
+      else if (e.key === 'Escape') { draft = null; ctx.draw() }
+      else return
+      e.preventDefault()
+      return
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { ctx.plan.delete(selected); select(null); e.preventDefault() }
     else if (e.key === 'Escape') { tool = 'select'; renderTools(); select(null) }
     else if (e.ctrlKey && e.key.toLowerCase() === 'z') { (e.shiftKey ? undo.redo() : undo.undo()); e.preventDefault() }
@@ -371,10 +436,11 @@ export function setupPlanEditor(ctx) {
 
   return {
     get active() { return active },
-    pointerDown, pointerMove, pointerUp, drawOverlay, dblclick,
+    pointerDown, pointerMove, pointerUp, drawOverlay, dblclick, hover,
     setActive(on) {
       active = on
       action = null
+      draft = null
       selected = null
       if (on) {
         ctx.ensureSeeded(ctx.deck())

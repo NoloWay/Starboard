@@ -235,6 +235,7 @@ export function setupBoard(ctx) {
         const w = toWorld(sx, sy)
         const room = shapeAt(g, deckEntries(), w.x, w.y, (it) => isRoomType(it.type))
         canvas.title = room ? labelOf(room[1]) : ''
+        editor.hover(w, e) // aperçu de la polyligne en cours
       }
       return
     }
