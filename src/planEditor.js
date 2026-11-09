@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { h, liveRender } from './dom.js'
 import { DOOR_LEVELS } from './rules.js'
-import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor } from './shipMap.js'
+import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, bbox, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor } from './shipMap.js'
 
 // Éditeur du plan du Gaïa (MJ) : formes, portes, caméras. Toutes les modifications vont dans la carte
 // `plan` du Y.Doc (partagées en direct, annulables avec Ctrl+Z).
@@ -93,7 +93,10 @@ export function setupPlanEditor(ctx) {
   let tool = 'select'
   let sides = 6
   let ortho = true
-  let selected = null
+  let selected = null // élément principal (panneau de propriétés)
+  let group = new Set() // tous les éléments sélectionnés (Ctrl+clic pour en ajouter / retirer)
+  const multi = () => group.size > 1
+  const groupItems = () => [...group].map((id) => [id, get(id)]).filter(([, it]) => it)
   let action = null // glisser en cours : move | handle | create
   const undo = new Y.UndoManager(ctx.plan, { captureTimeout: 400 }) // le chargement initial (origine 'seed') n'est pas annulable
 
@@ -102,7 +105,7 @@ export function setupPlanEditor(ctx) {
   const shapesZ = () => ctx.entries().filter(([, it]) => it.kind === 'shape').map(([, it]) => it.z ?? 0)
 
   // ---------- Copier / coller (entre étages) ----------
-  let clipboard = null
+  let clipboard = [] // éléments copiés (Ctrl+C)
 
   /** Copie un élément sur un étage (même position, au premier plan) et renvoie son nouvel identifiant. */
   function copyTo(it, deck) {
@@ -154,13 +157,28 @@ export function setupPlanEditor(ctx) {
             else if (it.pts) set(id, { ...it, pts: it.pts.map(([x, y]) => [s(x), s(y)]) })
           })),
         }, 'Aligner l’étage sur la grille')),
-      h('p', { class: 'hint' }, 'Alt : sans aimantation · Flèches : déplacer d’un cran (Maj : une case) · Suppr : effacer · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
+      h('p', { class: 'hint' }, 'Alt : sans aimantation · Flèches : déplacer d’un cran (Maj : une case) · Suppr : effacer · Ctrl+clic : sélection multiple · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
     )
   }
 
   function field(label, input) { return h('label', { class: 'field' }, h('span', {}, label), input) }
 
+  function removeGroup() {
+    ctx.doc.transact(() => group.forEach((id) => ctx.plan.delete(id)))
+    select(null)
+  }
+
   function buildProps() {
+    if (multi()) {
+      const target = h('select', {}, DECKS.filter((d) => d !== ctx.deck()).map((d) => h('option', { value: d }, `Étage ${d.replace('-', '−')}`)))
+      add(props,
+        h('h4', {}, `${group.size} éléments sélectionnés`),
+        h('p', { class: 'hint' }, 'Glisser l’un d’eux ou utiliser les flèches pour tout déplacer ; tirer un coin du cadre pour tout redimensionner (Maj : proportions gardées). Ctrl+clic pour ajouter ou retirer un élément.'),
+        h('div', { class: 'tool-row' }, target,
+          h('button', { class: 'small', title: 'Copier la sélection sur l’étage choisi, au même endroit', onclick: () => groupItems().forEach(([, it]) => copyTo(it, target.value)) }, 'Copier vers')),
+        h('button', { class: 'small danger', onclick: removeGroup }, 'Supprimer la sélection'))
+      return
+    }
     const it = selected && get(selected)
     if (!it) {
       add(props, h('h4', {}, 'Plan'), h('p', { class: 'muted' }, 'Choisis un outil pour dessiner, ou clique sur une pièce, une porte ou une caméra pour la modifier.'))
@@ -219,10 +237,58 @@ export function setupPlanEditor(ctx) {
     }
   }
 
-  function select(id) {
-    selected = id
+  /** Sélectionne un élément ; additive (Ctrl+clic) : l'ajoute au groupe, ou l'en retire s'il y est déjà. */
+  function select(id, additive = false) {
+    if (additive && id) {
+      if (group.has(id)) group.delete(id)
+      else group.add(id)
+      selected = group.has(id) ? id : [...group].at(-1) ?? null
+    } else {
+      group = new Set(id ? [id] : [])
+      selected = id
+    }
     renderProps()
     ctx.draw()
+  }
+  /** Sélectionne plusieurs éléments d'un coup (collage). */
+  function selectAll(ids) {
+    group = new Set(ids)
+    selected = ids.at(-1) ?? null
+    renderProps()
+    ctx.draw()
+  }
+
+  // ---------- Groupe : cadre englobant et mise à l'échelle ----------
+  function itemBox(it) {
+    if (it.kind === 'door') { const [x1, y1, x2, y2] = it.seg; return { minX: Math.min(x1, x2), minY: Math.min(y1, y2), maxX: Math.max(x1, x2), maxY: Math.max(y1, y2) } }
+    if (it.kind === 'camera') return { minX: it.x - CELL * 0.3, minY: it.y - CELL * 0.3, maxX: it.x + CELL * 0.3, maxY: it.y + CELL * 0.3 }
+    return bbox(it)
+  }
+  function groupBox(items) {
+    const boxes = items.map(([, it]) => itemBox(it))
+    return {
+      minX: Math.min(...boxes.map((b) => b.minX)), minY: Math.min(...boxes.map((b) => b.minY)),
+      maxX: Math.max(...boxes.map((b) => b.maxX)), maxY: Math.max(...boxes.map((b) => b.maxY)),
+    }
+  }
+  /** Coins du cadre du groupe ; o = coin opposé (point fixe de la mise à l'échelle). */
+  function groupCorners() {
+    const b = groupBox(groupItems())
+    return [[b.minX, b.minY, b.maxX, b.maxY], [b.maxX, b.minY, b.minX, b.maxY], [b.maxX, b.maxY, b.minX, b.minY], [b.minX, b.maxY, b.maxX, b.minY]]
+      .map(([x, y, ox, oy]) => ({ k: 'gcorner', x, y, o: { x: ox, y: oy } }))
+  }
+  /** Met un élément à l'échelle depuis le point o ; les points sont recalés sur la grille (sauf free). */
+  function scaleItem(it, o, sx, sy, free) {
+    const q = (v) => (free ? round(v) : Math.round(v / SNAP) * SNAP)
+    const f = (x, y) => [q(o.x + (x - o.x) * sx), q(o.y + (y - o.y) * sy)]
+    if (it.kind === 'door') { const [x1, y1, x2, y2] = it.seg; return { ...it, seg: [...f(x1, y1), ...f(x2, y2)] } }
+    if (it.kind === 'camera') { const [x, y] = f(it.x, it.y); return { ...it, x, y } }
+    const title = { titleDx: round((it.titleDx ?? 0) * sx), titleDy: round((it.titleDy ?? 0) * sy) }
+    if (it.circle) {
+      const [x, y] = f(it.circle.x, it.circle.y)
+      return { ...it, ...title, circle: { x, y, r: Math.max(SNAP, q(it.circle.r * Math.sqrt(sx * sy))) } }
+    }
+    return { ...it, ...title, pts: it.pts.map(([x, y]) => f(x, y)) }
   }
 
   // ---------- Poignées ----------
@@ -336,17 +402,29 @@ export function setupPlanEditor(ctx) {
       return true
     }
     const tol = 9 / ctx.zoom()
-    const sel = selected && get(selected)
-    const hd = sel && handles(sel).find((x) => Math.hypot(x.x - w.x, x.y - w.y) <= tol)
+    const near = (hd) => Math.hypot(hd.x - w.x, hd.y - w.y) <= tol
+    if (multi() && !e.ctrlKey) {
+      const corner = groupCorners().find(near)
+      if (corner) {
+        action = { kind: 'gscale', corner, starts: groupItems(), from: p }
+        return true
+      }
+    }
+    const sel = !multi() && selected && get(selected)
+    const hd = sel && handles(sel).find(near)
     if (hd) {
       action = { kind: 'handle', id: selected, hd, start: sel, from: p }
       return true
     }
     const entries = ctx.entries()
     const hit = doorAt(entries, w.x, w.y, Math.max(tol, CELL * 0.2)) ?? cameraAt(entries, w.x, w.y) ?? shapeAt(ctx.g, entries, w.x, w.y)
+    if (e.ctrlKey) { // Ctrl+clic : ajoute / retire du groupe, sans déplacer
+      if (hit) select(hit[0], true)
+      return !!hit
+    }
     if (!hit) { select(null); return false } // clic dans le vide : la vue se déplace
-    select(hit[0])
-    action = { kind: 'move', id: hit[0], from: p, start: hit[1] }
+    if (!group.has(hit[0])) select(hit[0])
+    action = { kind: 'move', from: p, starts: groupItems() } // déplace tout le groupe
     return true
   }
 
@@ -356,7 +434,15 @@ export function setupPlanEditor(ctx) {
     if (action.kind === 'move') {
       const dx = p.x - action.from.x
       const dy = p.y - action.from.y
-      if (dx || dy) set(action.id, translate(action.start, dx, dy))
+      if (dx || dy) ctx.doc.transact(() => action.starts.forEach(([id, it]) => set(id, translate(it, dx, dy))))
+    } else if (action.kind === 'gscale') {
+      const { corner: c, starts } = action
+      const o = c.o
+      const ratio = (v, a, b) => (Math.abs(b - a) < 1 ? 1 : Math.max(0.05, (v - a) / (b - a)))
+      let sx = ratio(p.x, o.x, c.x)
+      let sy = ratio(p.y, o.y, c.y)
+      if (e.shiftKey) sx = sy = Math.max(sx, sy) // Maj : garde les proportions
+      ctx.doc.transact(() => starts.forEach(([id, it]) => set(id, scaleItem(it, o, sx, sy, e.altKey))))
     } else if (action.kind === 'handle') {
       set(action.id, applyHandle(action.start, action.hd, p, e.altKey, action.from))
     } else {
@@ -415,15 +501,28 @@ export function setupPlanEditor(ctx) {
       if (CELL * zoom >= 6) lines(CELL, 'rgba(56, 232, 255, 0.16)')
     }
     g.save()
-    const it = selected && get(selected)
-    if (it) {
-      g.strokeStyle = '#ff3dd8'
-      g.lineWidth = 2 * px
-      g.setLineDash([6 * px, 4 * px])
-      if (it.kind === 'shape') g.stroke(shapePath(it))
-      else if (it.kind === 'door') { g.beginPath(); g.moveTo(it.seg[0], it.seg[1]); g.lineTo(it.seg[2], it.seg[3]); g.stroke() }
-      else { g.beginPath(); g.arc(it.x, it.y, CELL * 0.3, 0, Math.PI * 2); g.stroke() }
+    // Contour de chaque élément sélectionné
+    g.strokeStyle = '#ff3dd8'
+    g.lineWidth = 2 * px
+    g.setLineDash([6 * px, 4 * px])
+    for (const [, x] of groupItems()) {
+      if (x.kind === 'shape') g.stroke(shapePath(x))
+      else if (x.kind === 'door') { g.beginPath(); g.moveTo(x.seg[0], x.seg[1]); g.lineTo(x.seg[2], x.seg[3]); g.stroke() }
+      else { g.beginPath(); g.arc(x.x, x.y, CELL * 0.3, 0, Math.PI * 2); g.stroke() }
+    }
+    g.setLineDash([])
+    if (multi()) { // cadre du groupe et ses coins
+      const b = groupBox(groupItems())
+      g.strokeStyle = '#38e8ff'
+      g.setLineDash([4 * px, 4 * px])
+      g.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY)
       g.setLineDash([])
+      g.fillStyle = '#38e8ff'
+      for (const c of groupCorners()) g.fillRect(c.x - 5 * px, c.y - 5 * px, 10 * px, 10 * px)
+      g.strokeStyle = '#ff3dd8'
+    }
+    const it = !multi() && selected && get(selected)
+    if (it) {
       for (const hd of handles(it)) {
         if (hd.k === 'rotate') { g.beginPath(); g.moveTo(it.x, it.y); g.lineTo(hd.x, hd.y); g.stroke() }
         if (hd.k === 'title') { // titre : losange jaune
@@ -485,19 +584,19 @@ export function setupPlanEditor(ctx) {
     }
     // Flèches : déplace la sélection d'un cran (aimantation) ; Maj = une case, Alt = 1 px
     const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
-    if (ARROWS[e.key] && selected && get(selected)) {
+    if (ARROWS[e.key] && group.size) {
       const step = e.shiftKey ? CELL : e.altKey ? 1 : SNAP
       const [dx, dy] = ARROWS[e.key]
-      set(selected, translate(get(selected), dx * step, dy * step))
+      ctx.doc.transact(() => groupItems().forEach(([id, it]) => set(id, translate(it, dx * step, dy * step))))
       e.preventDefault()
       return
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { ctx.plan.delete(selected); select(null); e.preventDefault() }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && group.size) { removeGroup(); e.preventDefault() }
     else if (e.key === 'Escape') { tool = 'select'; renderTools(); select(null) }
     else if (e.ctrlKey && e.key.toLowerCase() === 'z') { (e.shiftKey ? undo.redo() : undo.undo()); e.preventDefault() }
     else if (e.ctrlKey && e.key.toLowerCase() === 'y') { undo.redo(); e.preventDefault() }
-    else if (e.ctrlKey && e.key.toLowerCase() === 'c' && selected) clipboard = get(selected)
-    else if (e.ctrlKey && e.key.toLowerCase() === 'v' && clipboard) { select(copyTo(clipboard, ctx.deck())); e.preventDefault() }
+    else if (e.ctrlKey && e.key.toLowerCase() === 'c' && group.size) clipboard = groupItems().map(([, it]) => it)
+    else if (e.ctrlKey && e.key.toLowerCase() === 'v' && clipboard.length) { selectAll(clipboard.map((it) => copyTo(it, ctx.deck()))); e.preventDefault() }
   })
 
   return {
@@ -508,6 +607,7 @@ export function setupPlanEditor(ctx) {
       action = null
       draft = null
       selected = null
+      group = new Set()
       if (on) {
         ctx.ensureSeeded(ctx.deck())
         renderTools()
@@ -522,12 +622,14 @@ export function setupPlanEditor(ctx) {
     /** Après un changement d'étage ou une modification du plan (même venant d'un autre joueur). */
     refresh() {
       if (!active) return
-      if (selected && !get(selected)) selected = null
+      group = new Set([...group].filter((id) => get(id)))
+      if (selected && !get(selected)) selected = [...group].at(-1) ?? null
       renderProps()
     },
     deckChanged() {
       if (!active) return
       selected = null
+      group = new Set()
       ctx.ensureSeeded(ctx.deck())
       renderProps()
     },
