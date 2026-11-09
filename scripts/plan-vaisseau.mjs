@@ -5,7 +5,7 @@
 //   =IF($A$1="0_12 Passerelle du réacteur"," ","")  → étage 0, code 12, nom « Passerelle du réacteur »
 // On s'en sert pour savoir exactement quelles cases forment chaque pièce (les couleurs de fond
 // varient d'une case à l'autre et ne sont pas fiables). Les cases grises hors pièce = structure de la coque.
-// Les contours en escalier sont lissés : marches → diagonales, puis angles arrondis (courbes).
+// Les contours en escalier sont lissés (marches → diagonales) ; les angles sont arrondis à l'affichage (src/shipMap.js).
 import ExcelJS from 'exceljs'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { stricterLevel } from '../src/rules.js'
@@ -92,27 +92,6 @@ function destairLoop(loop) {
     i = j - i >= 3 ? j : i + 1
   }
   return out
-}
-
-/** Chemin SVG d'un polygone (points en pixels) aux angles arrondis (rayon en cases, plafonné par les segments). */
-function roundedPath(P, radius) {
-  const m = P.length
-  const R = radius * CELL
-  const toward = (a, b, d) => {
-    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
-    return [a[0] + ((b[0] - a[0]) * d) / l, a[1] + ((b[1] - a[1]) * d) / l]
-  }
-  let d = ''
-  for (let i = 0; i < m; i++) {
-    const prev = P[(i - 1 + m) % m]
-    const p = P[i]
-    const next = P[(i + 1) % m]
-    const r = Math.min(R, Math.hypot(p[0] - prev[0], p[1] - prev[1]) / 2, Math.hypot(next[0] - p[0], next[1] - p[1]) / 2)
-    const a = toward(p, prev, r)
-    const b = toward(p, next, r)
-    d += `${i ? 'L' : 'M'}${n(a[0])},${n(a[1])}Q${n(p[0])},${n(p[1])},${n(b[0])},${n(b[1])}`
-  }
-  return `${d}Z`
 }
 
 /** Arêtes unitaires alignées → segments fusionnés { o, line, from, to } (unités de case). */
@@ -333,7 +312,9 @@ for (const deck of decks) {
   // Coordonnée de grille (éventuellement fractionnaire) → pixels
   const gx = (v) => { const i = Math.floor(v); return n(((colPos.get(i) ?? colPos.get(maxC + 1)) + (v - i) * (colW.get(i) ?? 0)) * CELL) }
   const gy = (v) => { const i = Math.floor(v); return n(((rowPos.get(i) ?? rowPos.get(maxR + 1)) + (v - i) * (rowH.get(i) ?? 0)) * CELL) }
-  const shape = (mask, radius) => contours(mask).map((l) => roundedPath(destairLoop(l).map(([x, y]) => [gx(x), gy(y)]), radius)).join('')
+  // Contours extérieurs (aire positive ; les trous sont ignorés), escaliers lissés, en pixels
+  const area = (l) => l.reduce((s, [x, y], i) => { const [x2, y2] = l[(i + 1) % l.length]; return s + x * y2 - x2 * y }, 0)
+  const loops = (mask) => contours(mask).filter((l) => area(l) > 0).map((l) => destairLoop(l).map(([x, y]) => [gx(x), gy(y)]))
   const segment = ({ o, line, from, to }) => (o === 'h' ? [gx(from), gy(line), gx(to), gy(line)] : [gx(line), gy(from), gx(line), gy(to)])
   // Pièces de part et d'autre d'une arête (première case du segment)
   const sides = ({ o, line, from }) => (o === 'h' ? [key(line - 1, from), key(line, from)] : [key(from, line - 1), key(from, line)])
@@ -343,73 +324,47 @@ for (const deck of decks) {
     return TYPE_LEVEL[z.type] ?? LEVEL_RULES.find(([re]) => re.test(z.name.toLowerCase()))?.[1] ?? 'Vert'
   }
 
-  const out = {
-    name: deck.name,
-    width: gx(maxC + 1),
-    height: gy(maxR + 1),
-    hull: shape(hull, 0.9),
-    engines: shape(engines, 0.6),
-    rooms: [],
-    doors: mergeEdges(doorEdges).map((e) => {
-      const ids = [...new Set(sides(e))]
-      return {
-        id: `${deck.name}:${e.o}${e.line}:${e.from}-${e.to}`, // stable tant que le plan Excel ne bouge pas
-        seg: segment(e),
-        level: ids.map(roomLevel).reduce(stricterLevel, 'Vert'),
-        rooms: ids.map((id) => { const z = info.get(id); return /^\d/.test(rooms.get(id).code) ? `${rooms.get(id).code} · ${z.label}` : z.label }),
-      }
-    }),
-    access: mergeEdges(accessEdges).map(segment),
-    cameras: [...fill].filter(([k, a]) => a === CAMERA && hull.has(k)).map(([k]) => { const [r, c] = k.split(',').map(Number); return [gx(c + 0.5), gy(r + 0.5)] }),
-  }
-
+  // Formes du plan (éditables dans l'appli) : polygones (pts) ou cercles ; arrondi des angles en cases
+  const shapes = [
+    ...loops(hull).map((pts) => ({ type: 'hull', code: '', name: 'Coque', radius: 0.9, pts })),
+    ...loops(engines).map((pts) => ({ type: 'engine', code: '', name: 'Propulseur', radius: 0.6, pts })),
+  ]
+  const roomShapes = []
   for (const [id, room] of rooms) {
     const z = info.get(id)
-    const { cells } = z
-    // Emplacement du titre : la plus large rangée parmi les deux du haut
-    let best = null
-    for (const row of [z.r0, z.r0 + 1]) {
-      const cols = cells.filter(([r]) => r === row).map(([, c]) => c).sort((a, b) => a - b)
-      let s = cols[0]
-      for (let i = 1; i <= cols.length; i++) {
-        if (i < cols.length && cols[i] === cols[i - 1] + 1) continue
-        const w = cols[i - 1] - s + 1
-        if (!best || w > best.w) best = { row, s, w }
-        s = cols[i]
-      }
-    }
-    // Centre : moyenne des centres de cases (en pixels, grille redimensionnée)
-    const cx = cells.reduce((a, [, c]) => a + gx(c + 0.5), 0) / cells.length
-    const cy = cells.reduce((a, [r]) => a + gy(r + 0.5), 0) / cells.length
-    let d = shape(room.cells, 0.3)
-    let title = { x: n((gx(best.s) + gx(best.s + best.w)) / 2), y: gy(best.row + 0.5), w: n(gx(best.s + best.w) - gx(best.s)) }
+    let pieces = loops(room.cells)
+    let radius = 0.3
     if (HEXAGONS.has(`${deck.name}|${room.code}`)) {
       // Hexagone régulier, pointe en haut et en bas, côtés verticaux sur l'emprise de la pièce
       const L = gx(z.c0)
       const R = gx(z.c1 + 1)
       const T = gy(z.r0)
       const B = gy(z.r1 + 1)
-      const i = (R - L) / (2 * Math.sqrt(3))
-      const mid = (L + R) / 2
-      d = roundedPath([[mid, T], [R, T + i], [R, B - i], [mid, B], [L, B - i], [L, T + i]], 0.6)
-      title = { x: n(mid), y: n(T + i + CELL * 0.5), w: n(R - L - CELL * 0.4) }
+      const i = n((R - L) / (2 * Math.sqrt(3)))
+      const mid = n((L + R) / 2)
+      pieces = [[[mid, T], [R, n(T + i)], [R, n(B - i)], [mid, B], [L, n(B - i)], [L, n(T + i)]]]
+      radius = 0.6
     }
-    out.rooms.push({
-      code: room.code,
-      name: z.name,
-      label: z.label,
-      type: z.type,
-      size: cells.length,
-      d,
-      title,
-      center: { x: n(cx), y: n(cy) },
-      rows: z.r1 - z.r0 + 1,
-    })
+    for (const pts of pieces) roomShapes.push({ type: z.type, code: room.code, name: z.label, radius, pts })
   }
-  out.rooms.sort((a, b) => a.code.localeCompare(b.code, 'fr', { numeric: true }))
+  roomShapes.sort((a, b) => a.code.localeCompare(b.code, 'fr', { numeric: true }))
+
+  const out = {
+    name: deck.name,
+    width: gx(maxC + 1),
+    height: gy(maxR + 1),
+    shapes: [...shapes, ...roomShapes],
+    doors: mergeEdges(doorEdges).map((e) => ({
+      id: `${deck.name}:${e.o}${e.line}:${e.from}-${e.to}`, // stable tant que le plan Excel ne bouge pas
+      seg: segment(e),
+      level: [...new Set(sides(e))].map(roomLevel).reduce(stricterLevel, 'Vert'),
+    })),
+    access: mergeEdges(accessEdges).map(segment),
+    cameras: [...fill].filter(([k, a]) => a === CAMERA && hull.has(k)).map(([k]) => { const [r, c] = k.split(',').map(Number); return [gx(c + 0.5), gy(r + 0.5)] }),
+  }
   plan.decks.push(out)
   const levels = out.doors.reduce((a, d) => ({ ...a, [d.level]: (a[d.level] ?? 0) + 1 }), {})
-  console.log(`Étage ${deck.name} : ${out.width}×${out.height} px, ${out.rooms.length} pièces, ${out.doors.length} portes ${JSON.stringify(levels)}, ${out.access.length} accès, ${out.cameras.length} caméras`)
+  console.log(`Étage ${deck.name} : ${out.width}×${out.height} px, ${roomShapes.length} pièces, ${out.doors.length} portes ${JSON.stringify(levels)}, ${out.access.length} accès, ${out.cameras.length} caméras`)
 }
 
 // ---------- Étage 2 : absent de l'Excel ----------
@@ -418,7 +373,11 @@ for (const deck of decks) {
 // dans l'ordre des rampes. Le contour du vaisseau (toit) reprend celui de l'étage 1.
 {
   const below = plan.decks.find((d) => d.name === '1')
-  const hub = below.rooms.find((r) => r.code === '9') // salle de transit d'où partent les rampes
+  const hub = below.shapes.find((s) => s.code === '9') // salle de transit d'où partent les rampes
+  const xs = hub.pts.map(([x]) => x)
+  const ys = hub.pts.map(([, y]) => y)
+  const hx = (Math.min(...xs) + Math.max(...xs)) / 2
+  const hy = (Math.min(...ys) + Math.max(...ys)) / 2
   const R = CELL * 4 // rayon d'un dôme
   const GAP = CELL * 1.5
   const domes = [
@@ -426,31 +385,20 @@ for (const deck of decks) {
     { code: '2', name: 'Serre botanique', ramp: '9.1' },
     { code: '3', name: 'Jardin', ramp: '9.3' },
   ]
-  const circle = (x, y, r) => `M${n(x - r)},${n(y)}A${r},${r},0,1,0,${n(x + r)},${n(y)}A${r},${r},0,1,0,${n(x - r)},${n(y)}Z`
-  const square = (x, y, s) => roundedPath([[x - s / 2, y - s / 2], [x + s / 2, y - s / 2], [x + s / 2, y + s / 2], [x - s / 2, y + s / 2]], 0.3)
-  const rooms = []
+  const shapes = below.shapes.filter((s) => s.type === 'hull' || s.type === 'engine')
   domes.forEach((dome, i) => {
-    const x = hub.center.x + (i - 1) * (2 * R + GAP)
-    const y = hub.center.y
-    const ramp = below.rooms.find((r) => r.code === dome.ramp)
-    rooms.push({
-      code: dome.code, name: dome.name, label: dome.name, type: 'dome', size: 50,
-      d: circle(x, y, R), circle: { x: n(x), y: n(y), r: R },
-      title: { x: n(x), y: n(y - R + CELL * 1.1), w: n(R * 1.4) }, center: { x: n(x), y: n(y) }, rows: 8,
-    })
+    const x = n(hx + (i - 1) * (2 * R + GAP))
+    const y = n(hy)
+    shapes.push({ type: 'dome', code: dome.code, name: dome.name, radius: 0, circle: { x, y, r: R } })
     // Palier de la rampe, en bas du dôme
     const ry = y + R - CELL * 1.4
-    rooms.push({
-      code: `${dome.code}.1`, name: `${ramp.name} (vers l'étage 1, ${dome.ramp})`, label: `Rampe vers l'étage 1 (${dome.ramp})`,
-      type: 'room', size: 1, d: square(x, ry, CELL * 1.6),
-      title: { x: n(x), y: n(ry), w: CELL }, center: { x: n(x), y: n(ry) }, rows: 1,
+    const s = CELL * 0.8
+    shapes.push({
+      type: 'room', code: `${dome.code}.1`, name: `Rampe vers l'étage 1 (${dome.ramp})`, radius: 0.3,
+      pts: [[x - s, ry - s], [x + s, ry - s], [x + s, ry + s], [x - s, ry + s]].map(([a, b]) => [n(a), n(b)]),
     })
   })
-  plan.decks.unshift({
-    name: '2', width: below.width, height: below.height,
-    hull: below.hull, engines: below.engines,
-    rooms, doors: [], access: [], cameras: [],
-  })
+  plan.decks.unshift({ name: '2', width: below.width, height: below.height, shapes, doors: [], access: [], cameras: [] })
   console.log('Étage 2 : 3 dômes de verre (ajoutés, absents de l\'Excel)')
 }
 

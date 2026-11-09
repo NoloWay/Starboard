@@ -4,7 +4,7 @@
     {
       "name": "starboard-dev",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5173", "--strictPort"],
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5173", "--strictPort", "--no-open"],
       "port": 5173
     }
   ]

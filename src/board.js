@@ -1,7 +1,8 @@
 import { h } from './dom.js'
 import { BADGES, DOOR_ACCESS, DOOR_LEVELS, stricterLevel } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
-import { ALL_DOORS, CELL, DECKS, deckSize, doorAt, drawDeck, roomAt } from './shipMap.js'
+import { CELL, DECKS, deckSize, doorAt, drawPlan, isRoomType, labelOf, roomsAround, seedItems, shapeAt } from './shipMap.js'
+import { setupPlanEditor } from './planEditor.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
 //
@@ -52,11 +53,30 @@ export function setupBoard(ctx) {
   const board = doc.getMap('board')
   const tokens = doc.getMap('tokens')
   const characters = doc.getMap('characters')
-  const doorLevels = doc.getMap('doorLevels') // id de porte → niveau d'accréditation choisi (sinon : défaut du plan)
+  const plan = doc.getMap('plan') // éléments du plan du Gaïa (formes, portes, caméras), voir shipMap.js
+  const doorLevels = doc.getMap('doorLevels') // ancien stockage des niveaux de portes : repris à la première modification d'un étage
 
   const canvas = document.getElementById('board')
   const g = canvas.getContext('2d')
   const bar = document.getElementById('scene-bar')
+
+  // ---------- Plan du Gaïa : version d'origine (Excel) tant que l'étage n'a jamais été modifié ----------
+  const deckMarker = (d) => `deck:${d}`
+  /** Éléments d'un étage : [[id, élément]…] */
+  function deckEntries(d = deck) {
+    if (!plan.has(deckMarker(d))) return seedItems(d)
+    return [...plan.entries()].filter(([, it]) => it.deck === d && it.kind !== 'deck')
+  }
+  /** Copie l'étage d'origine dans le Y.Doc avant sa première modification (identifiants stables : sans doublons). */
+  function ensureSeeded(d) {
+    if (plan.has(deckMarker(d))) return
+    doc.transact(() => {
+      plan.set(deckMarker(d), { kind: 'deck', deck: d })
+      for (const [id, it] of seedItems(d)) {
+        plan.set(id, it.kind === 'door' && doorLevels.has(id) ? { ...it, level: doorLevels.get(id) } : it)
+      }
+    }, 'seed')
+  }
 
   // ---------- Vue (onglet, local à chaque joueur) et scène courante ----------
   // « ship » : plan du Gaïa, un étage choisi localement (scène `ship:<étage>`) ; « map » : scènes du MJ.
@@ -133,7 +153,7 @@ export function setupBoard(ctx) {
     g.setTransform(devicePixelRatio * c.zoom, 0, 0, devicePixelRatio * c.zoom, devicePixelRatio * c.x, devicePixelRatio * c.y)
 
     const bmp = mode === 'ship' ? null : bitmap(s.image)
-    if (mode === 'ship') drawDeck(g, deck, c.zoom, doorLevel)
+    if (mode === 'ship') drawPlan(g, deckEntries(), c.zoom)
     else if (bmp) {
       g.imageSmoothingEnabled = c.zoom < 2 // plans en « pixel art » : net quand on zoome
       g.drawImage(bmp, 0, 0, s.width, s.height)
@@ -165,6 +185,8 @@ export function setupBoard(ctx) {
       g.globalAlpha = 1
     })
 
+    if (mode === 'ship') editor.drawOverlay(g, c.zoom)
+
     document.getElementById('zoom-label').textContent = `${Math.round(c.zoom * 100)} %`
   }
 
@@ -187,7 +209,13 @@ export function setupBoard(ctx) {
   canvas.addEventListener('pointerdown', (e) => {
     const { sx, sy } = pointer(e)
     const world = toWorld(sx, sy)
-    const hit = e.button === 0 ? hitToken(world) : null
+    const editing = mode === 'ship' && editor.active
+    if (editing && editor.pointerDown(world, e)) {
+      drag = { kind: 'edit' }
+      canvas.setPointerCapture(e.pointerId)
+      return
+    }
+    const hit = e.button === 0 && !editing ? hitToken(world) : null
     if (hit) {
       const t = tokens.get(hit)
       drag = { kind: 'token', id: hit, dx: t.x - world.x, dy: t.y - world.y }
@@ -205,12 +233,14 @@ export function setupBoard(ctx) {
       // Vue Vaisseau : nom de la pièce survolée en infobulle
       if (mode === 'ship') {
         const w = toWorld(sx, sy)
-        const room = roomAt(g, deck, w.x, w.y)
-        canvas.title = room ? (/^\d/.test(room.code) ? `${room.code} · ${room.label}` : room.label) : ''
+        const room = shapeAt(g, deckEntries(), w.x, w.y, (it) => isRoomType(it.type))
+        canvas.title = room ? labelOf(room[1]) : ''
       }
       return
     }
-    if (drag.kind === 'pan') {
+    if (drag.kind === 'edit') {
+      editor.pointerMove(toWorld(sx, sy), e)
+    } else if (drag.kind === 'pan') {
       cam().x = drag.cx + sx - drag.sx
       cam().y = drag.cy + sy - drag.sy
       draw()
@@ -222,13 +252,14 @@ export function setupBoard(ctx) {
   })
 
   function endDrag(e) {
-    // Simple clic (sans déplacement) dans la vue Vaisseau : ouvre la fiche de la porte cliquée
-    if (drag?.kind === 'pan' && e?.type === 'pointerup' && mode === 'ship') {
+    if (drag?.kind === 'edit') editor.pointerUp()
+    // Simple clic (sans déplacement) dans la vue Vaisseau, hors édition : ouvre la fiche de la porte cliquée
+    if (drag?.kind === 'pan' && e?.type === 'pointerup' && mode === 'ship' && !editor.active) {
       const { sx, sy } = pointer(e)
       if (Math.hypot(sx - drag.sx, sy - drag.sy) < 4) {
         const w = toWorld(sx, sy)
-        const door = doorAt(deck, w.x, w.y)
-        if (door) openDoor(door, sx, sy)
+        const door = doorAt(deckEntries(), w.x, w.y)
+        if (door) openDoor(door[0], sx, sy)
         else closeDoor()
       }
     }
@@ -237,6 +268,7 @@ export function setupBoard(ctx) {
   }
   canvas.addEventListener('pointerup', endDrag)
   canvas.addEventListener('pointercancel', endDrag)
+  canvas.addEventListener('lostpointercapture', endDrag) // filet de sécurité si le relâchement n'arrive pas
   canvas.addEventListener('auxclick', (e) => e.preventDefault())
 
   function zoomAt(sx, sy, factor) {
@@ -256,6 +288,7 @@ export function setupBoard(ctx) {
 
   canvas.addEventListener('dblclick', (e) => {
     const { sx, sy } = pointer(e)
+    if (mode === 'ship' && editor.active) return editor.dblclick(toWorld(sx, sy))
     const hit = hitToken(toWorld(sx, sy))
     if (hit) tokens.delete(hit)
   })
@@ -305,18 +338,23 @@ export function setupBoard(ctx) {
   }
 
   // ---------- Portes du vaisseau : niveau d'accréditation (modifiable par tous) ----------
-  const doorLevel = (door) => doorLevels.get(door.id) ?? door.level
-  let popup = null // { el, door }
+  let popup = null // { el, id }
 
   function closeDoor() {
     popup?.el.remove()
     popup = null
   }
 
-  function openDoor(door, sx, sy) {
+  /** Modifie un élément du plan (l'étage est d'abord copié depuis l'Excel s'il n'a jamais été modifié). */
+  function setItem(id, it) {
+    ensureSeeded(it.deck)
+    plan.set(id, it)
+  }
+
+  function openDoor(id, sx, sy) {
     closeDoor()
     const el = h('div', { class: 'door-popup' })
-    popup = { el, door }
+    popup = { el, id }
     renderDoor()
     canvas.parentElement.append(el)
     // Placée à côté du clic, sans sortir du plateau
@@ -327,24 +365,46 @@ export function setupBoard(ctx) {
 
   function renderDoor() {
     if (!popup) return
-    const { el, door } = popup
-    const level = doorLevel(door)
+    const { el, id } = popup
+    const entries = deckEntries()
+    const door = entries.find(([k]) => k === id)?.[1]
+    if (!door) return closeDoor()
+    const def = door.defaultLevel ?? door.level
     const color = (name) => BADGES.find((b) => b.name === name)?.color
     el.innerHTML = ''
     el.append(
-      h('header', {}, h('b', {}, 'Porte'), h('button', { class: 'icon', title: 'Fermer', onclick: closeDoor }, '×')),
-      h('p', { class: 'door-rooms' }, door.rooms.join('  ↔  ') || 'Accès'),
+      h('header', {}, h('b', {}, door.access ? 'Trappe technique' : 'Porte'), h('button', { class: 'icon', title: 'Fermer', onclick: closeDoor }, '×')),
+      h('p', { class: 'door-rooms' }, roomsAround(g, entries, door).join('  ↔  ') || 'Accès'),
       h('label', { class: 'field' }, 'Accréditation requise',
         h('select', {
-          style: `--badge:${color(level)}`,
-          onchange: (e) => (e.target.value === door.level ? doorLevels.delete(door.id) : doorLevels.set(door.id, e.target.value)),
-        }, DOOR_LEVELS.map((l) => h('option', { value: l, selected: l === level }, `Badge ${l}`)))),
+          style: `--badge:${color(door.level)}`,
+          onchange: (e) => setItem(id, { ...door, level: e.target.value }),
+        }, DOOR_LEVELS.map((l) => h('option', { value: l, selected: l === door.level }, `Badge ${l}`)))),
       h('div', { class: 'door-badges' }, h('span', { class: 'muted' }, 'Ouvrent :'),
-        DOOR_ACCESS[level].map((b) => h('i', { title: `Badge ${b}`, style: `--badge:${color(b)}` }))),
-      h('p', { class: 'muted door-default' }, `Par défaut : badge ${door.level}`,
-        level !== door.level && h('button', { class: 'small', onclick: () => doorLevels.delete(door.id) }, 'Rétablir')),
+        DOOR_ACCESS[door.level].map((b) => h('i', { title: `Badge ${b}`, style: `--badge:${color(b)}` }))),
+      h('p', { class: 'muted door-default' }, `Par défaut : badge ${def}`,
+        door.level !== def && h('button', { class: 'small', onclick: () => setItem(id, { ...door, level: def }) }, 'Rétablir')),
     )
   }
+
+  /** MJ : applique `fn(porte) → niveau` à toutes les portes de tous les étages. */
+  function setAllDoors(fn) {
+    DECKS.forEach(ensureSeeded)
+    doc.transact(() => plan.forEach((it, id) => {
+      if (it.kind === 'door') plan.set(id, { ...it, level: fn(it) })
+    }))
+  }
+
+  // ---------- Éditeur du plan (MJ) ----------
+  const editor = setupPlanEditor({
+    doc, plan, g,
+    deck: () => deck,
+    entries: () => deckEntries(),
+    ensureSeeded,
+    zoom: () => cam().zoom,
+    draw: () => draw(),
+    stage: canvas.parentElement,
+  })
 
   // ---------- Barre des scènes ----------
   const sortedScenes = () => [...scenes.entries()].sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
@@ -419,28 +479,32 @@ export function setupBoard(ctx) {
           try { localStorage.setItem('starboard:deck', d) } catch { /* stockage indisponible */ }
           lastScene = sceneId()
           if (!cam().fitted) fit()
+          editor.deckChanged()
           renderBar()
           draw()
         },
       }, `Étage ${d.replace('-', '−')}`))))
-      // MJ : niveau minimal pour toutes les portes (chaque porte garde son niveau par défaut s'il est plus élevé)
+      // MJ : niveau minimal pour toutes les portes (chaque porte garde son niveau par défaut s'il est plus élevé),
+      // et mode modification du plan
       if (ctx.me().isGM) {
         const level = h('select', { title: 'Niveau à appliquer' }, DOOR_LEVELS.map((l) => h('option', { value: l }, `Badge ${l}`)))
         bar.append(h('span', { class: 'sep' }), h('span', { class: 'muted' }, 'Portes'), level,
           h('button', {
             class: 'small',
             title: 'Toutes les portes passent à ce niveau, sauf celles dont le niveau par défaut est plus élevé',
-            onclick: () => doc.transact(() => ALL_DOORS.forEach((d) => {
-              const v = stricterLevel(level.value, d.level)
-              if (v === d.level) doorLevels.delete(d.id)
-              else doorLevels.set(d.id, v)
-            })),
+            onclick: () => setAllDoors((d) => stricterLevel(level.value, d.defaultLevel ?? d.level)),
           }, 'Appliquer à toutes'),
           h('button', {
             class: 'small danger',
             title: 'Rendre à toutes les portes leur niveau par défaut',
-            onclick: () => { if (confirm('Remettre toutes les portes à leur niveau par défaut ?')) doorLevels.clear() },
-          }, 'Réinitialiser'))
+            onclick: () => { if (confirm('Remettre toutes les portes à leur niveau par défaut ?')) setAllDoors((d) => d.defaultLevel ?? d.level) },
+          }, 'Réinitialiser'),
+          h('span', { class: 'sep' }),
+          h('button', {
+            class: editor.active ? 'small primary' : 'small',
+            title: 'Dessiner et modifier le plan (pièces, portes, caméras)',
+            onclick: () => { closeDoor(); editor.setActive(!editor.active); renderBar() },
+          }, editor.active ? 'Terminer' : '✎ Modifier le plan'))
       }
       return
     }
@@ -488,7 +552,7 @@ export function setupBoard(ctx) {
   images.observe(draw)
   tokens.observe(draw)
   characters.observeDeep(draw) // nom, badge ou visibilité d'un personnage
-  doorLevels.observe(() => { draw(); renderDoor() })
+  plan.observe(() => { draw(); renderDoor(); editor.refresh() })
 
   addEventListener('resize', resize)
   document.getElementById('btn-fit').addEventListener('click', fit)
@@ -500,11 +564,16 @@ export function setupBoard(ctx) {
 
   return {
     addToken,
-    rerender() { renderBar(); draw() },
+    rerender() {
+      if (editor.active && !ctx.me().isGM) editor.setActive(false) // l'édition est réservée au MJ
+      renderBar()
+      draw()
+    },
     /** Change d'onglet : 'ship' (Vaisseau) ou 'map' (Carte). */
     setMode(m) {
       mode = m === 'map' ? 'map' : 'ship'
       closeDoor()
+      if (mode !== 'ship' && editor.active) editor.setActive(false)
       lastScene = sceneId()
       lastImage = scene().image
       if (!cam().fitted) fit()
