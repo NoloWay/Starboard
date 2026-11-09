@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { h, liveRender } from './dom.js'
 import { DOOR_LEVELS } from './rules.js'
-import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, shapeAt, doorAt, cameraAt, shapePath } from './shipMap.js'
+import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor } from './shipMap.js'
 
 // Éditeur du plan du Gaïa (MJ) : formes, portes, caméras. Toutes les modifications vont dans la carte
 // `plan` du Y.Doc (partagées en direct, annulables avec Ctrl+Z).
@@ -184,7 +184,9 @@ export function setupPlanEditor(ctx) {
           h('button', {
             class: 'small', title: 'Dupliquer',
             onclick: () => { const id = crypto.randomUUID(); set(id, { ...translate(it, CELL, CELL), z: Math.max(...z) + 1 }); select(id) },
-          }, 'Dupliquer')),
+          }, 'Dupliquer'),
+          (it.titleDx || it.titleDy) && h('button', { class: 'small', title: 'Remettre le titre en haut, au centre', onclick: () => patch({ titleDx: 0, titleDy: 0 }) }, 'Recentrer le titre')),
+        h('p', { class: 'hint' }, 'Le losange jaune déplace le titre.'),
         copyRow, remove)
     } else if (it.kind === 'door') {
       const levels = (value, key) => h('select', { onchange: (e) => patch({ [key]: e.target.value }) },
@@ -220,8 +222,11 @@ export function setupPlanEditor(ctx) {
       const t = ((it.angle ?? 0) * Math.PI) / 180
       return [{ k: 'rotate', x: it.x + Math.cos(t) * CELL * 0.9, y: it.y + Math.sin(t) * CELL * 0.9 }]
     }
-    if (it.circle) return [{ k: 'radius', x: it.circle.x + it.circle.r, y: it.circle.y }]
+    // Poignée du titre en premier : prioritaire si elle recouvre un sommet
+    const title = isRoomType(it.type) ? [{ k: 'title', ...titleAnchor(it) }] : []
+    if (it.circle) return [...title, { k: 'radius', x: it.circle.x + it.circle.r, y: it.circle.y }]
     return [
+      ...title,
       ...it.pts.map(([x, y], i) => ({ k: 'vertex', i, x, y })),
       ...it.pts.map(([x, y], i) => { const [x2, y2] = it.pts[(i + 1) % it.pts.length]; return { k: 'edge', i, x: (x + x2) / 2, y: (y + y2) / 2 } }),
     ]
@@ -229,6 +234,7 @@ export function setupPlanEditor(ctx) {
 
   /** it : l'élément au début du glisser ; from : point de départ du glisser. */
   function applyHandle(it, hd, p, free, from) {
+    if (hd.k === 'title') return { ...it, titleDx: round((it.titleDx ?? 0) + p.x - from.x), titleDy: round((it.titleDy ?? 0) + p.y - from.y) }
     if (hd.k === 'vertex') return { ...it, pts: moveVertex(it.pts, hd.i, p, ortho) }
     if (hd.k === 'edge') return { ...it, pts: moveEdge(it.pts, hd.i, p.x - from.x, p.y - from.y, ortho) }
     if (hd.k === 'radius') return { ...it, circle: { ...it.circle, r: round(Math.max(CELL * 0.3, Math.hypot(p.x - it.circle.x, p.y - it.circle.y))) } }
@@ -394,6 +400,12 @@ export function setupPlanEditor(ctx) {
       g.setLineDash([])
       for (const hd of handles(it)) {
         if (hd.k === 'rotate') { g.beginPath(); g.moveTo(it.x, it.y); g.lineTo(hd.x, hd.y); g.stroke() }
+        if (hd.k === 'title') { // titre : losange jaune
+          g.fillStyle = '#ffd84a'
+          g.beginPath(); g.moveTo(hd.x, hd.y - 6 * px); g.lineTo(hd.x + 6 * px, hd.y); g.lineTo(hd.x, hd.y + 6 * px); g.lineTo(hd.x - 6 * px, hd.y); g.closePath()
+          g.fill(); g.stroke()
+          continue
+        }
         if (hd.k === 'edge') { // milieu de côté : petit rond
           g.fillStyle = '#38e8ff'
           g.beginPath(); g.arc(hd.x, hd.y, 3.5 * px, 0, Math.PI * 2); g.fill()

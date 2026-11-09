@@ -183,6 +183,12 @@ export function cameraAt(entries, x, y) {
 /** Nom affiché d'une forme (« numéro · nom » si le numéro est un nombre). */
 export const labelOf = (it) => (/^\d/.test(it.code ?? '') ? `${it.code} · ${it.name}` : it.name || it.code || '')
 
+/** Position du titre d'une forme : en haut, centré, plus le décalage choisi dans l'éditeur (titleDx, titleDy). */
+export function titleAnchor(s) {
+  const b = bbox(s)
+  return { x: (b.minX + b.maxX) / 2 + (s.titleDx ?? 0), y: b.minY + (s.circle ? CELL * 1.1 : CELL * 0.5) + (s.titleDy ?? 0) }
+}
+
 /** Pièces de part et d'autre d'une porte. */
 export function roomsAround(g, entries, door) {
   const [x1, y1, x2, y2] = door.seg
@@ -325,7 +331,7 @@ export function drawPlan(g, entries, zoom) {
         fitFont(g, longest, maxW, Math.round(CELL * 0.42), 6)
         g.fillStyle = style.text
         g.globalAlpha = 0.92
-        lines.forEach((t, i) => g.fillText(t, cx, titleY + i * CELL * 0.45))
+        lines.forEach((t, i) => g.fillText(t, cx + (s.titleDx ?? 0), titleY + (s.titleDy ?? 0) + i * CELL * 0.45))
         g.globalAlpha = 1
         titleShown = true
       }
