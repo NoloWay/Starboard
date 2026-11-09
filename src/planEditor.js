@@ -143,7 +143,17 @@ export function setupPlanEditor(ctx) {
             select(null)
             ctx.ensureSeeded(ctx.deck())
           },
-        }, 'Réinitialiser l’étage')),
+        }, 'Réinitialiser l’étage'),
+        h('button', {
+          class: 'small', title: 'Cale tous les points de l’étage sur la grille d’aimantation (bords qui ne se superposent pas)',
+          onclick: () => ctx.doc.transact(() => ctx.entries().forEach(([id, it]) => {
+            const s = (v) => Math.round(v / SNAP) * SNAP
+            if (it.kind === 'door') set(id, { ...it, seg: it.seg.map(s) })
+            else if (it.kind === 'camera') set(id, { ...it, x: s(it.x), y: s(it.y) })
+            else if (it.circle) set(id, { ...it, circle: { x: s(it.circle.x), y: s(it.circle.y), r: Math.max(SNAP, s(it.circle.r)) } })
+            else if (it.pts) set(id, { ...it, pts: it.pts.map(([x, y]) => [s(x), s(y)]) })
+          })),
+        }, 'Aligner l’étage sur la grille')),
       h('p', { class: 'hint' }, 'Alt : sans aimantation · Flèches : déplacer d’un cran (Maj : une case) · Suppr : effacer · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
     )
   }
@@ -388,6 +398,22 @@ export function setupPlanEditor(ctx) {
   function drawOverlay(g, zoom) {
     if (!active) return
     const px = 1 / zoom
+    // Grille d'aimantation (1/4 de case) et de cases, sur la zone visible
+    {
+      const inv = g.getTransform().inverse()
+      const a = inv.transformPoint(new DOMPoint(0, 0))
+      const b = inv.transformPoint(new DOMPoint(g.canvas.width, g.canvas.height))
+      const lines = (step, color) => {
+        g.strokeStyle = color
+        g.lineWidth = px
+        g.beginPath()
+        for (let x = Math.floor(a.x / step) * step; x <= b.x; x += step) { g.moveTo(x, a.y); g.lineTo(x, b.y) }
+        for (let y = Math.floor(a.y / step) * step; y <= b.y; y += step) { g.moveTo(a.x, y); g.lineTo(b.x, y) }
+        g.stroke()
+      }
+      if (SNAP * zoom >= 6) lines(SNAP, 'rgba(56, 232, 255, 0.07)')
+      if (CELL * zoom >= 6) lines(CELL, 'rgba(56, 232, 255, 0.16)')
+    }
     g.save()
     const it = selected && get(selected)
     if (it) {

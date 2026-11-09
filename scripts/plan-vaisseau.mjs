@@ -20,6 +20,7 @@ const CAMERA = 'FFFF9900' // remplissage : caméras
 
 const key = (r, c) => `${r},${c}`
 const n = (v) => Math.round(v * 10) / 10
+const q = (v) => Math.round(v / (CELL / 4)) * (CELL / 4) // arrondi à la grille d'aimantation de l'éditeur (1/4 de case)
 
 function cellText(cell) {
   const v = cell.value
@@ -302,6 +303,8 @@ for (const deck of decks) {
     for (let c = z.c0; c <= z.c1; c++) colW.set(c, Math.max(colW.get(c), fc))
     for (let r = z.r0; r <= z.r1; r++) rowH.set(r, Math.max(rowH.get(r), fr))
   }
+  // Largeurs arrondies au 1/4 de case : tous les bords tombent sur la grille d'aimantation de l'éditeur
+  for (const sizes of [colW, rowH]) for (const [k, v] of sizes) sizes.set(k, Math.max(0.5, Math.round(v * 4) / 4))
   const cumul = (sizes, from, to) => {
     const pos = new Map([[from, 0]])
     for (let i = from; i <= to; i++) pos.set(i + 1, pos.get(i) + sizes.get(i))
@@ -340,8 +343,8 @@ for (const deck of decks) {
       const R = gx(z.c1 + 1)
       const T = gy(z.r0)
       const B = gy(z.r1 + 1)
-      const i = n((R - L) / (2 * Math.sqrt(3)))
-      const mid = n((L + R) / 2)
+      const i = q((R - L) / (2 * Math.sqrt(3)))
+      const mid = q((L + R) / 2)
       pieces = [[[mid, T], [R, n(T + i)], [R, n(B - i)], [mid, B], [L, n(B - i)], [L, n(T + i)]]]
       radius = 0.6
     }
@@ -387,12 +390,12 @@ for (const deck of decks) {
   ]
   const shapes = below.shapes.filter((s) => s.type === 'hull' || s.type === 'engine')
   domes.forEach((dome, i) => {
-    const x = n(hx + (i - 1) * (2 * R + GAP))
-    const y = n(hy)
+    const x = q(hx + (i - 1) * (2 * R + GAP))
+    const y = q(hy)
     shapes.push({ type: 'dome', code: dome.code, name: dome.name, radius: 0, circle: { x, y, r: R } })
     // Palier de la rampe, en bas du dôme
-    const ry = y + R - CELL * 1.4
-    const s = CELL * 0.8
+    const ry = y + R - CELL * 1.5
+    const s = CELL * 0.75
     shapes.push({
       type: 'room', code: `${dome.code}.1`, name: `Rampe vers l'étage 1 (${dome.ramp})`, radius: 0.3,
       pts: [[x - s, ry - s], [x + s, ry - s], [x + s, ry + s], [x - s, ry + s]].map(([a, b]) => [n(a), n(b)]),
