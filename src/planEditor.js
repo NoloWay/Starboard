@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { h, liveRender } from './dom.js'
 import { DOOR_LEVELS } from './rules.js'
-import { CELL, SHAPE_TYPES, ICON_NAMES, shapeAt, doorAt, cameraAt, shapePath } from './shipMap.js'
+import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, shapeAt, doorAt, cameraAt, shapePath } from './shipMap.js'
 
 // Éditeur du plan du Gaïa (MJ) : formes, portes, caméras. Toutes les modifications vont dans la carte
 // `plan` du Y.Doc (partagées en direct, annulables avec Ctrl+Z).
@@ -100,6 +100,19 @@ export function setupPlanEditor(ctx) {
   const get = (id) => ctx.plan.get(id)
   const set = (id, it) => ctx.plan.set(id, it)
   const shapesZ = () => ctx.entries().filter(([, it]) => it.kind === 'shape').map(([, it]) => it.z ?? 0)
+
+  // ---------- Copier / coller (entre étages) ----------
+  let clipboard = null
+
+  /** Copie un élément sur un étage (même position, au premier plan) et renvoie son nouvel identifiant. */
+  function copyTo(it, deck) {
+    if (!it) return null
+    ctx.ensureSeeded(deck)
+    const zs = [...ctx.plan.values()].filter((x) => x.deck === deck && x.kind === 'shape').map((x) => x.z ?? 0)
+    const id = crypto.randomUUID()
+    set(id, { ...it, deck, ...(it.kind === 'shape' ? { z: Math.max(0, ...zs) + 1 } : {}) })
+    return id
+  }
   const snap = (w, free) => (free ? { x: round(w.x), y: round(w.y) } : { x: Math.round(w.x / SNAP) * SNAP, y: Math.round(w.y / SNAP) * SNAP })
 
   // ---------- Panneaux ----------
@@ -131,7 +144,7 @@ export function setupPlanEditor(ctx) {
             ctx.ensureSeeded(ctx.deck())
           },
         }, 'Réinitialiser l’étage')),
-      h('p', { class: 'hint' }, 'Alt : sans aimantation · Suppr : effacer · Échap : désélectionner · molette / clic milieu : vue'),
+      h('p', { class: 'hint' }, 'Alt : sans aimantation · Suppr : effacer · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
     )
   }
 
@@ -145,6 +158,10 @@ export function setupPlanEditor(ctx) {
     }
     const patch = (changes) => set(selected, { ...get(selected), ...changes })
     const remove = h('button', { class: 'small danger', onclick: () => { ctx.plan.delete(selected); select(null) } }, 'Supprimer')
+    // Copier vers un autre étage (même position)
+    const target = h('select', {}, DECKS.filter((d) => d !== ctx.deck()).map((d) => h('option', { value: d }, `Étage ${d.replace('-', '−')}`)))
+    const copyRow = h('div', { class: 'tool-row' }, target,
+      h('button', { class: 'small', title: 'Copier cet élément sur l’étage choisi, au même endroit', onclick: () => copyTo(get(selected), target.value) }, 'Copier vers'))
 
     if (it.kind === 'shape') {
       const z = shapesZ()
@@ -168,7 +185,7 @@ export function setupPlanEditor(ctx) {
             class: 'small', title: 'Dupliquer',
             onclick: () => { const id = crypto.randomUUID(); set(id, { ...translate(it, CELL, CELL), z: Math.max(...z) + 1 }); select(id) },
           }, 'Dupliquer')),
-        remove)
+        copyRow, remove)
     } else if (it.kind === 'door') {
       const levels = (value, key) => h('select', { onchange: (e) => patch({ [key]: e.target.value }) },
         DOOR_LEVELS.map((l) => h('option', { value: l, selected: l === value }, `Badge ${l}`)))
@@ -178,7 +195,7 @@ export function setupPlanEditor(ctx) {
         field('Niveau par défaut (commande « toutes les portes »)', levels(it.defaultLevel ?? it.level, 'defaultLevel')),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!it.access, onchange: (e) => patch({ access: e.target.checked }) }),
           'Trappe technique (pointillés)'),
-        remove)
+        copyRow, remove)
     } else if (it.kind === 'camera') {
       add(props,
         h('h4', {}, 'Caméra de surveillance'),
@@ -186,7 +203,7 @@ export function setupPlanEditor(ctx) {
           type: 'range', min: 0, max: 359, step: 1, value: Math.round(((it.angle ?? 0) % 360 + 360) % 360),
           oninput: (e) => patch({ angle: Number(e.target.value) }),
         })),
-        remove)
+        copyRow, remove)
     }
   }
 
@@ -432,6 +449,8 @@ export function setupPlanEditor(ctx) {
     else if (e.key === 'Escape') { tool = 'select'; renderTools(); select(null) }
     else if (e.ctrlKey && e.key.toLowerCase() === 'z') { (e.shiftKey ? undo.redo() : undo.undo()); e.preventDefault() }
     else if (e.ctrlKey && e.key.toLowerCase() === 'y') { undo.redo(); e.preventDefault() }
+    else if (e.ctrlKey && e.key.toLowerCase() === 'c' && selected) clipboard = get(selected)
+    else if (e.ctrlKey && e.key.toLowerCase() === 'v' && clipboard) { select(copyTo(clipboard, ctx.deck())); e.preventDefault() }
   })
 
   return {
