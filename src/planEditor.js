@@ -144,7 +144,7 @@ export function setupPlanEditor(ctx) {
             ctx.ensureSeeded(ctx.deck())
           },
         }, 'Réinitialiser l’étage')),
-      h('p', { class: 'hint' }, 'Alt : sans aimantation · Suppr : effacer · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
+      h('p', { class: 'hint' }, 'Alt : sans aimantation · Flèches : déplacer d’un cran (Maj : une case) · Suppr : effacer · Ctrl+C / Ctrl+V : copier, y compris vers un autre étage · Échap : désélectionner · molette / clic milieu : vue'),
     )
   }
 
@@ -454,6 +454,15 @@ export function setupPlanEditor(ctx) {
       else if (e.key === 'Backspace') { draft.pts.pop(); if (!draft.pts.length) draft = null; ctx.draw() }
       else if (e.key === 'Escape') { draft = null; ctx.draw() }
       else return
+      e.preventDefault()
+      return
+    }
+    // Flèches : déplace la sélection d'un cran (aimantation) ; Maj = une case, Alt = 1 px
+    const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+    if (ARROWS[e.key] && selected && get(selected)) {
+      const step = e.shiftKey ? CELL : e.altKey ? 1 : SNAP
+      const [dx, dy] = ARROWS[e.key]
+      set(selected, translate(get(selected), dx * step, dy * step))
       e.preventDefault()
       return
     }
