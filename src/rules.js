@@ -109,6 +109,7 @@ export const PLAYERS = [
   { name: 'Withex', character: 'Emelisa Breaenna' },
   { name: 'Luneloup', character: 'Cal Atilkis' },
   { name: 'Baptracien', character: 'Zadya Alipha' },
+  { name: 'Rodag', character: 'Mulgan' },
   { name: 'Walter', gm: true },
 ]
 const norm = (s) => (s || '').trim().toLowerCase()
