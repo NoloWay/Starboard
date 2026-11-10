@@ -162,7 +162,14 @@ ws.eachRow((row, r) => {
 decks.forEach((d, i) => { d.to = (decks[i + 1]?.from ?? ws.rowCount + 1) - 1 })
 
 const plan = { cell: CELL, decks: [] }
+// Grille commune à tous les étages (colonnes par numéro, rangées comptées depuis le haut de la coque) :
+// 1re passe = mesure des largeurs voulues par chaque étage, 2e passe = dessin avec la largeur maximale,
+// pour que la coque et les pièces superposées tombent exactement au même endroit d'un étage à l'autre.
+const sharedCol = new Map()
+const sharedRow = new Map() // rangée relative → hauteur
+let sharedMinC = Infinity, sharedMaxC = -Infinity, sharedRows = 0
 
+for (const pass of ['measure', 'build'])
 for (const deck of decks) {
   const fill = new Map() // "r,c" → argb
   const roomOf = new Map() // "r,c" → identifiant de pièce
@@ -272,9 +279,10 @@ for (const deck of decks) {
 
   const all = [...hull, ...engines].map((k) => k.split(',').map(Number))
   const minR = Math.min(...all.map(([r]) => r)) - 1
-  const minC = Math.min(...all.map(([, c]) => c)) - 1
-  const maxR = Math.max(...all.map(([r]) => r)) + 2
-  const maxC = Math.max(...all.map(([, c]) => c)) + 2
+  let minC = Math.min(...all.map(([, c]) => c)) - 1
+  let maxR = Math.max(...all.map(([r]) => r)) + 2
+  let maxC = Math.max(...all.map(([, c]) => c)) + 2
+  if (pass === 'build') { minC = sharedMinC; maxC = sharedMaxC; maxR = minR + sharedRows - 1 }
 
   // Infos par pièce : type, nom affiché, emprise
   const info = new Map()
@@ -305,6 +313,16 @@ for (const deck of decks) {
   }
   // Largeurs arrondies au 1/4 de case : tous les bords tombent sur la grille d'aimantation de l'éditeur
   for (const sizes of [colW, rowH]) for (const [k, v] of sizes) sizes.set(k, Math.max(0.5, Math.round(v * 4) / 4))
+  if (pass === 'measure') {
+    for (const [c, v] of colW) sharedCol.set(c, Math.max(sharedCol.get(c) ?? 0, v))
+    for (const [r, v] of rowH) sharedRow.set(r - minR, Math.max(sharedRow.get(r - minR) ?? 0, v))
+    sharedMinC = Math.min(sharedMinC, minC)
+    sharedMaxC = Math.max(sharedMaxC, maxC)
+    sharedRows = Math.max(sharedRows, maxR - minR + 1)
+    continue
+  }
+  for (let c = minC; c <= maxC; c++) colW.set(c, sharedCol.get(c) ?? 0.5)
+  for (let r = minR; r <= maxR; r++) rowH.set(r, sharedRow.get(r - minR) ?? 0.5)
   const cumul = (sizes, from, to) => {
     const pos = new Map([[from, 0]])
     for (let i = from; i <= to; i++) pos.set(i + 1, pos.get(i) + sizes.get(i))

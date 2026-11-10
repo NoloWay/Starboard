@@ -1,7 +1,7 @@
 import { h } from './dom.js'
 import { BADGES, DOOR_ACCESS, DOOR_LEVELS, stricterLevel } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
-import { CELL, DECKS, deckSize, doorAt, drawPlan, isRoomType, labelOf, roomsAround, seedItems, shapeAt } from './shipMap.js'
+import { CELL, DECKS, bbox, deckSize, doorAt, drawPlan, isRoomType, labelOf, roomsAround, seedItems, shapeAt } from './shipMap.js'
 import { setupPlanEditor } from './planEditor.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
@@ -96,20 +96,35 @@ export function setupBoard(ctx) {
 
   // ---------- Caméra (locale, une par scène) ----------
   const cams = {}
-  const cam = () => (cams[sceneId()] ??= { x: 0, y: 0, zoom: 1, fitted: false })
+  // Une seule caméra pour tous les étages du vaisseau : changer d'étage garde le cadrage (les étages se superposent)
+  const cam = () => (cams[mode === 'ship' ? SHIP_SCENE : sceneId()] ??= { x: 0, y: 0, zoom: 1, fitted: false })
   const toWorld = (sx, sy) => ({ x: (sx - cam().x) / cam().zoom, y: (sy - cam().y) / cam().zoom })
   const view = () => canvas.getBoundingClientRect()
 
   /** Cadre la carte entière (ou l'origine s'il n'y a pas d'image). */
+  /** Emprise de tous les éléments de tous les étages (même cadre quel que soit l'étage affiché). */
+  function shipBounds() {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+    const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y) }
+    for (const d of DECKS) {
+      for (const [, it] of deckEntries(d)) {
+        if (it.kind === 'shape') { const b = bbox(it); add(b.minX, b.minY); add(b.maxX, b.maxY) }
+        else if (it.kind === 'door') { add(it.seg[0], it.seg[1]); add(it.seg[2], it.seg[3]) }
+        else if (it.kind === 'camera') add(it.x, it.y)
+      }
+    }
+    return x0 < x1 ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } : null
+  }
+
   function fit() {
-    const s = scene()
+    const s = mode === 'ship' ? { image: 'plan', ...(shipBounds() ?? { x: 0, y: 0, ...deckSize(deck) }) } : { x: 0, y: 0, ...scene() }
     const { width, height } = view()
     const c = cam()
     if (!width || !height) return // pas encore affiché (onglet en arrière-plan) : on cadrera au redimensionnement
     if (s.image && s.width && s.height) {
       c.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(width / s.width, height / s.height) * 0.95))
-      c.x = (width - s.width * c.zoom) / 2
-      c.y = (height - s.height * c.zoom) / 2
+      c.x = (width - s.width * c.zoom) / 2 - s.x * c.zoom
+      c.y = (height - s.height * c.zoom) / 2 - s.y * c.zoom
     } else {
       c.zoom = 1
       c.x = 0
