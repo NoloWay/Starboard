@@ -176,6 +176,7 @@ $('file-import').addEventListener('change', async (e) => {
   const file = e.target.files[0]
   e.target.value = ''
   if (!file) return
+  if (role !== 'gm') return // l'import écrase la partie de tout le monde : réservé au MJ
   let data
   try {
     data = JSON.parse(await file.text())

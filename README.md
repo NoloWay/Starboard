@@ -24,7 +24,7 @@ Ouvre l'URL affichée dans **deux onglets** (même adresse, avec le `#code` de s
 - **Musique** (colonne de droite) : le MJ colle un lien YouTube et clique « Lancer » ; la musique démarre chez tout le monde au même moment. Pause, arrêt, boucle, et « + Liste » pour garder ses ambiances sous la main. Chacun règle son propre volume.
 - **d6 / d20 / d100** : jets libres, visibles dans le journal de tous.
 - **Importer les fiches Excel** : mettre les Excel dans `references/`, lancer `npm run import-fiches`, puis importer `references/fiches-starboard.json` avec le bouton **Importer**.
-- **Exporter / Importer** : sauvegarde et reprise de la partie en fichier JSON.
+- **Exporter / Importer** : sauvegarde et reprise de la partie en fichier JSON (Importer : MJ seulement, remplace pour tout le monde les parties présentes dans le fichier).
 - Inviter les amis : leur envoyer l'URL complète (avec le `#code`).
 
 ## Mettre en ligne gratuitement (GitHub Pages)
