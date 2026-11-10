@@ -4,7 +4,7 @@ import { setupSheets, replaceCharacters } from './sheets.js'
 import { setupShip, writeShip } from './shipPanel.js'
 import { setupBoard } from './board.js'
 import { setupMusic } from './music.js'
-import { PLAYERS, presetOf } from './rules.js'
+import { PLAYERS, OBSERVER, presetOf } from './rules.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -18,7 +18,8 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v) } catch { /* stockage indisponible */ } },
 }
 
-let playerName = store.get('starboard:name') || 'Anonyme'
+// Un ancien nom libre (hors liste) redevient « Observateur »
+let playerName = presetOf(store.get('starboard:name'))?.name || OBSERVER
 // Le rôle est propre à chaque salle (on peut être MJ d'une partie et joueur d'une autre) ;
 // sans choix enregistré, il vient du préréglage du joueur (Walter = MJ)
 const roleKey = `starboard:role:${roomId}`
@@ -27,9 +28,7 @@ const me = () => ({ name: playerName, isGM: role === 'gm' })
 
 $('room-label').textContent = `Salle : ${roomId}`
 function renderNames() {
-  const opts = PLAYERS.map((p) => [p.name, `${p.name} · ${p.gm ? 'MJ' : p.character.split(' ')[0]}`])
-  if (!presetOf(playerName)) opts.push([playerName, playerName])
-  opts.push(['', 'Autre nom…'])
+  const opts = PLAYERS.map((p) => [p.name, p.gm ? `${p.name} · MJ` : p.character ? `${p.name} · ${p.character.split(' ')[0]}` : p.name])
   $('name-select').replaceChildren(...opts.map(([v, t]) => new Option(t, v, false, v === playerName)))
 }
 renderNames()
@@ -131,15 +130,9 @@ const ship = setupShip({ doc, me, onRoll: rollCheck, onOpen: () => sheets.close(
 
 // ---------- Identité : nom & rôle ----------
 $('name-select').addEventListener('change', (e) => {
-  const name = e.target.value || prompt('Ton nom de joueur ?', playerName)?.trim()
-  if (name) {
-    playerName = name
-    store.set('starboard:name', name)
-  }
-  renderNames()
-  const preset = presetOf(playerName)
-  if (preset) setRole(preset.gm ? 'gm' : 'player')
-  else { renderLog(); sheets.rerender(); ship.rerender() }
+  playerName = e.target.value
+  store.set('starboard:name', playerName)
+  setRole(presetOf(playerName).gm ? 'gm' : 'player')
 })
 
 $('role-select').addEventListener('change', (e) => setRole(e.target.value))

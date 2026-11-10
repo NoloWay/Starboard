@@ -104,13 +104,16 @@ export function skillStatsLabel(skill) {
 
 // Joueurs de la table : pseudo → personnage (gm = le MJ). Sert au choix du nom,
 // au rôle par défaut et au propriétaire d'une fiche dont le champ « Joueur » est vide.
+// Ordre alphabétique des pseudos ; « Observateur » = rôle neutre, sans personnage.
+export const OBSERVER = 'Observateur'
 export const PLAYERS = [
-  { name: 'Noloway', character: 'Arkhelos Philia' },
-  { name: 'Withex', character: 'Emelisa Breaenna' },
-  { name: 'Luneloup', character: 'Cal Atilkis' },
   { name: 'Baptracien', character: 'Zadya Alipha' },
+  { name: 'Luneloup', character: 'Cal Atilkis' },
+  { name: 'Noloway', character: 'Arkhelos Philia' },
   { name: 'Rodag', character: 'Mulgan' },
   { name: 'Walter', gm: true },
+  { name: 'Withex', character: 'Emelisa Breaenna' },
+  { name: OBSERVER },
 ]
 const norm = (s) => (s || '').trim().toLowerCase()
 export const presetOf = (name) => PLAYERS.find((p) => norm(p.name) === norm(name))
