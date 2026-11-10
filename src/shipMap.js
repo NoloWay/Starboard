@@ -214,12 +214,15 @@ function fitFont(g, text, maxWidth, size, min) {
   return null
 }
 
+/** Texte du titre affiché sur le plan : le numéro seul si la case « numéro seul » est cochée (nom en infobulle). */
+const titleText = (s) => (s.numberOnly && s.code ? s.code : labelOf(s))
+
 /** Largeur disponible pour le titre d'une forme. */
 const titleWidth = (s) => { const b = bbox(s); return (s.circle ? (b.maxX - b.minX) * 0.7 : b.maxX - b.minX) - CELL * 0.3 }
 
 /** Taille de titre (unités monde) qui fait tenir « numéro · nom » sur une ligne dans la largeur de la pièce. */
 export function autoTitleSize(g, s) {
-  return fitFont(g, labelOf(s), titleWidth(s), Math.round(CELL * 1.2), 6) ?? 6
+  return fitFont(g, titleText(s), titleWidth(s), Math.round(CELL * 1.2), 6) ?? 6
 }
 
 /**
@@ -323,7 +326,7 @@ export function drawPlan(g, entries, zoom, gm = false) {
     const cy = (b.minY + b.maxY) / 2
     const rows = hgt / CELL
     const titleY = b.minY + (s.circle ? CELL * 1.1 : CELL * 0.5)
-    const full = labelOf(s)
+    const full = titleText(s)
     const isNumber = /^\d/.test(s.code ?? '')
     const maxW = titleWidth(s)
     let titleShown = false

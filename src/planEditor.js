@@ -202,6 +202,9 @@ export function setupPlanEditor(ctx) {
         field('Logo', h('select', { onchange: (e) => patch({ icon: e.target.value }) },
           [['', 'Automatique (d’après le nom)'], ['none', 'Aucun'], ...Object.entries(ICON_NAMES)]
             .map(([k, l]) => h('option', { value: k, selected: k === (it.icon ?? '') }, l)))),
+        isRoomType(it.type) && it.code && h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: !!it.numberOnly, onchange: (e) => patch({ numberOnly: e.target.checked }) }),
+          ' Numéro seul (sans le nom)'),
         isRoomType(it.type) && field('Taille du nom (vide = automatique)', h('div', { class: 'tool-row' },
           h('input', {
             type: 'number', min: 4, max: 120, step: 1, value: it.titleSize ?? '', placeholder: 'auto',
