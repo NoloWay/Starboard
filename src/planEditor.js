@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { h, liveRender } from './dom.js'
 import { DOOR_LEVELS } from './rules.js'
-import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, bbox, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor } from './shipMap.js'
+import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, bbox, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor, autoTitleSize } from './shipMap.js'
 
 // Éditeur du plan du Gaïa (MJ) : formes, portes, caméras. Toutes les modifications vont dans la carte
 // `plan` du Y.Doc (partagées en direct, annulables avec Ctrl+Z).
@@ -202,6 +202,15 @@ export function setupPlanEditor(ctx) {
         field('Logo', h('select', { onchange: (e) => patch({ icon: e.target.value }) },
           [['', 'Automatique (d’après le nom)'], ['none', 'Aucun'], ...Object.entries(ICON_NAMES)]
             .map(([k, l]) => h('option', { value: k, selected: k === (it.icon ?? '') }, l)))),
+        isRoomType(it.type) && field('Taille du nom (vide = automatique)', h('div', { class: 'tool-row' },
+          h('input', {
+            type: 'number', min: 4, max: 120, step: 1, value: it.titleSize ?? '', placeholder: 'auto',
+            onchange: (e) => patch({ titleSize: Number(e.target.value) || null }),
+          }),
+          h('button', {
+            class: 'small', title: 'Plus grande taille qui fait tenir le nom sur une ligne dans la largeur de la pièce',
+            onclick: () => patch({ titleSize: autoTitleSize(ctx.g, it) }),
+          }, 'Ajuster à la pièce'))),
         !it.circle && field(`Arrondi des angles (${it.radius ?? 0.3})`, h('input', {
           type: 'range', min: 0, max: 1.5, step: 0.1, value: it.radius ?? 0.3, onchange: (e) => patch({ radius: Number(e.target.value) }),
         })),

@@ -168,7 +168,7 @@ export function setupBoard(ctx) {
     g.setTransform(devicePixelRatio * c.zoom, 0, 0, devicePixelRatio * c.zoom, devicePixelRatio * c.x, devicePixelRatio * c.y)
 
     const bmp = mode === 'ship' ? null : bitmap(s.image)
-    if (mode === 'ship') drawPlan(g, deckEntries(), c.zoom)
+    if (mode === 'ship') drawPlan(g, deckEntries(), c.zoom, ctx.me().isGM)
     else if (bmp) {
       g.imageSmoothingEnabled = c.zoom < 2 // plans en « pixel art » : net quand on zoome
       g.drawImage(bmp, 0, 0, s.width, s.height)
@@ -388,6 +388,17 @@ export function setupBoard(ctx) {
     const def = door.defaultLevel ?? door.level
     const color = (name) => BADGES.find((b) => b.name === name)?.color
     el.innerHTML = ''
+    // Joueurs : seulement le niveau par défaut ; le niveau réel (réglé par le MJ) leur reste caché
+    if (!ctx.me().isGM) {
+      el.append(
+        h('header', {}, h('b', {}, door.access ? 'Trappe technique' : 'Porte'), h('button', { class: 'icon', title: 'Fermer', onclick: closeDoor }, '×')),
+        h('p', { class: 'door-rooms' }, roomsAround(g, entries, door).join('  ↔  ') || 'Accès'),
+        h('p', { class: 'field' }, 'Accréditation requise : ', h('b', { style: `color:${color(def)}` }, `Badge ${def}`)),
+        h('div', { class: 'door-badges' }, h('span', { class: 'muted' }, 'Ouvrent :'),
+          DOOR_ACCESS[def].map((b) => h('i', { title: `Badge ${b}`, style: `--badge:${color(b)}` }))),
+      )
+      return
+    }
     el.append(
       h('header', {}, h('b', {}, door.access ? 'Trappe technique' : 'Porte'), h('button', { class: 'icon', title: 'Fermer', onclick: closeDoor }, '×')),
       h('p', { class: 'door-rooms' }, roomsAround(g, entries, door).join('  ↔  ') || 'Accès'),
@@ -583,6 +594,7 @@ export function setupBoard(ctx) {
     rerender() {
       if (editor.active && !ctx.me().isGM) editor.setActive(false) // l'édition est réservée au MJ
       renderBar()
+      renderDoor()
       draw()
     },
     /** Change d'onglet : 'ship' (Vaisseau) ou 'map' (Carte). */

@@ -214,11 +214,19 @@ function fitFont(g, text, maxWidth, size, min) {
   return null
 }
 
+/** Largeur disponible pour le titre d'une forme. */
+const titleWidth = (s) => { const b = bbox(s); return (s.circle ? (b.maxX - b.minX) * 0.7 : b.maxX - b.minX) - CELL * 0.3 }
+
+/** Taille de titre (unités monde) qui fait tenir « numéro · nom » sur une ligne dans la largeur de la pièce. */
+export function autoTitleSize(g, s) {
+  return fitFont(g, labelOf(s), titleWidth(s), Math.round(CELL * 1.2), 6) ?? 6
+}
+
 /**
  * Dessine un étage. Le contexte est déjà dans le repère monde (zoom / déplacement appliqués).
  * entries : [[id, élément]…] de l'étage.
  */
-export function drawPlan(g, entries, zoom) {
+export function drawPlan(g, entries, zoom, gm = false) {
   const px = 1 / zoom // un pixel écran, en unités monde
   const items = entries.map(([, it]) => it)
   const shapes = items.filter((it) => it.kind === 'shape').sort(drawOrder)
@@ -283,7 +291,9 @@ export function drawPlan(g, entries, zoom) {
       g.strokeStyle = '#ff5a6a'
       g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke()
     }
-    g.fillStyle = BADGES.find((x) => x.name === d.level)?.color ?? '#41c05a'
+    // Pastille : niveau réel pour le MJ, niveau par défaut pour les joueurs
+    const shown = gm ? d.level : d.defaultLevel ?? d.level
+    g.fillStyle = BADGES.find((x) => x.name === shown)?.color ?? '#41c05a'
     g.strokeStyle = 'rgba(234, 246, 255, 0.8)' // anneau clair : lisible même pour les badges sombres
     g.lineWidth = CELL * 0.035
     g.beginPath(); g.arc((x1 + x2) / 2, (y1 + y2) / 2, CELL * 0.13, 0, Math.PI * 2); g.fill(); g.stroke()
@@ -308,7 +318,6 @@ export function drawPlan(g, entries, zoom) {
   for (const s of shapes.filter((x) => isRoomType(x.type))) {
     const style = STYLE[s.type] ?? STYLE.room
     const b = bbox(s)
-    const w = b.maxX - b.minX
     const hgt = b.maxY - b.minY
     const cx = (b.minX + b.maxX) / 2
     const cy = (b.minY + b.maxY) / 2
@@ -316,9 +325,17 @@ export function drawPlan(g, entries, zoom) {
     const titleY = b.minY + (s.circle ? CELL * 1.1 : CELL * 0.5)
     const full = labelOf(s)
     const isNumber = /^\d/.test(s.code ?? '')
-    const maxW = (s.circle ? w * 0.7 : w) - CELL * 0.3
+    const maxW = titleWidth(s)
     let titleShown = false
-    if (full && area(s) >= CELL * CELL * 3.5) {
+    if (full && s.titleSize) {
+      // Taille choisie dans l'éditeur : une ligne, sans ajustement
+      g.font = `600 ${s.titleSize}px "Segoe UI", system-ui`
+      g.fillStyle = style.text
+      g.globalAlpha = 0.92
+      g.fillText(full, cx + (s.titleDx ?? 0), titleY + (s.titleDy ?? 0))
+      g.globalAlpha = 1
+      titleShown = true
+    } else if (full && area(s) >= CELL * CELL * 3.5) {
       // Nom complet sur une ligne, sinon sur deux (pièce assez haute), sinon le numéro seul (nom en infobulle)
       const words = full.split(' ')
       const half = Math.ceil(words.length / 2)
