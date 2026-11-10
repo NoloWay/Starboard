@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import { h, liveRender, pips } from './dom.js'
 import {
   STATS, STAT_POINTS, STAT_MAX, LEVELS, SKILLS, SKILL_GROUPS, BADGES,
-  BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel,
+  BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel, ownerOf,
 } from './rules.js'
 
 // Champs texte d'une fiche : [clé, libellé, type]
@@ -79,7 +79,7 @@ export function setupSheets(ctx) {
   const canSee = (c) => ctx.me().isGM || !c.get('hidden')
   const canEdit = (c) => {
     const { name, isGM } = ctx.me()
-    const owner = (c.get('player') || '').trim()
+    const owner = ownerOf(c.get('name'), c.get('player'))
     return isGM || !owner || owner.toLowerCase() === name.toLowerCase()
   }
 
@@ -89,8 +89,8 @@ export function setupSheets(ctx) {
       .filter(([, c]) => canSee(c))
       .sort(([, a], [, b]) => {
         // Personnages joueurs d'abord, puis ordre alphabétique
-        const pa = a.get('player') ? 0 : 1
-        const pb = b.get('player') ? 0 : 1
+        const pa = ownerOf(a.get('name'), a.get('player')) ? 0 : 1
+        const pb = ownerOf(b.get('name'), b.get('player')) ? 0 : 1
         return pa - pb || a.get('name').localeCompare(b.get('name'))
       })
     const isGM = ctx.me().isGM
@@ -111,7 +111,7 @@ export function setupSheets(ctx) {
       }),
       h('span', { class: 'badge-dot', style: `--badge:${badge?.color ?? '#555'}`, title: `Badge ${c.get('badge')}` }),
       h('span', { class: 'crew-name' }, c.get('name')),
-      h('span', { class: 'crew-post' }, c.get('player') ? `PJ · ${c.get('player')}` : c.get('post')),
+      h('span', { class: 'crew-post' }, ownerOf(c.get('name'), c.get('player')) ? `PJ · ${ownerOf(c.get('name'), c.get('player'))}` : c.get('post')),
       ))
     }
     if (!entries.length) listEl.append(h('li', { class: 'muted' }, 'Aucune fiche visible'))
@@ -141,6 +141,7 @@ export function setupSheets(ctx) {
     const c = characters.get(openId)
     if (!c || !canSee(c)) return close()
     const data = c.toJSON()
+    data.player = ownerOf(data.name, data.player)
     const stats = c.get('stats')
     const skills = c.get('skills')
     const mayEdit = canEdit(c)

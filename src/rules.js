@@ -101,3 +101,18 @@ export function skillValue(skill, stats, level = 0) {
 export function skillStatsLabel(skill) {
   return skill.stats.map((k) => STAT_LABEL[k]).join(' + ') + (skill.stats.length === 1 ? ' ×2' : '')
 }
+
+// Joueurs de la table : pseudo → personnage (gm = le MJ). Sert au choix du nom,
+// au rôle par défaut et au propriétaire d'une fiche dont le champ « Joueur » est vide.
+export const PLAYERS = [
+  { name: 'Noloway', character: 'Arkhelos Philia' },
+  { name: 'Withex', character: 'Emelisa Breaenna' },
+  { name: 'Luneloup', character: 'Cal Atilkis' },
+  { name: 'Baptracien', character: 'Zadya Alipha' },
+  { name: 'Walter', gm: true },
+]
+const norm = (s) => (s || '').trim().toLowerCase()
+export const presetOf = (name) => PLAYERS.find((p) => norm(p.name) === norm(name))
+// Joueur d'un personnage : le champ « Joueur » de la fiche, sinon le préréglage
+export const ownerOf = (charName, player) =>
+  (player || '').trim() || PLAYERS.find((p) => p.character && norm(p.character) === norm(charName))?.name || ''

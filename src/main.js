@@ -4,6 +4,7 @@ import { setupSheets, replaceCharacters } from './sheets.js'
 import { setupShip, writeShip } from './shipPanel.js'
 import { setupBoard } from './board.js'
 import { setupMusic } from './music.js'
+import { PLAYERS, presetOf } from './rules.js'
 
 // ---------- Salle & identité ----------
 if (!location.hash.slice(1)) {
@@ -17,18 +18,21 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v) } catch { /* stockage indisponible */ } },
 }
 
-let playerName = store.get('starboard:name')
-if (!playerName) {
-  playerName = prompt('Ton nom de joueur ?') || 'Anonyme'
-  store.set('starboard:name', playerName)
-}
-// Le rôle est propre à chaque salle (on peut être MJ d'une partie et joueur d'une autre)
+let playerName = store.get('starboard:name') || 'Anonyme'
+// Le rôle est propre à chaque salle (on peut être MJ d'une partie et joueur d'une autre) ;
+// sans choix enregistré, il vient du préréglage du joueur (Walter = MJ)
 const roleKey = `starboard:role:${roomId}`
-let role = store.get(roleKey) === 'gm' ? 'gm' : 'player'
+let role = store.get(roleKey) || (presetOf(playerName)?.gm ? 'gm' : 'player')
 const me = () => ({ name: playerName, isGM: role === 'gm' })
 
 $('room-label').textContent = `Salle : ${roomId}`
-$('btn-name').textContent = playerName
+function renderNames() {
+  const opts = PLAYERS.map((p) => [p.name, `${p.name} · ${p.gm ? 'MJ' : p.character.split(' ')[0]}`])
+  if (!presetOf(playerName)) opts.push([playerName, playerName])
+  opts.push(['', 'Autre nom…'])
+  $('name-select').replaceChildren(...opts.map(([v, t]) => new Option(t, v, false, v === playerName)))
+}
+renderNames()
 $('role-select').value = role
 
 // ---------- État partagé ----------
@@ -126,19 +130,22 @@ const sheets = setupSheets({ doc, me, onRoll: rollCheck, onOpen: () => ship.clos
 const ship = setupShip({ doc, me, onRoll: rollCheck, onOpen: () => sheets.close() })
 
 // ---------- Identité : nom & rôle ----------
-$('btn-name').addEventListener('click', () => {
-  const name = prompt('Ton nom de joueur ?', playerName)?.trim()
-  if (!name) return
-  playerName = name
-  store.set('starboard:name', name)
-  $('btn-name').textContent = name
-  renderLog()
-  sheets.rerender()
-  ship.rerender()
+$('name-select').addEventListener('change', (e) => {
+  const name = e.target.value || prompt('Ton nom de joueur ?', playerName)?.trim()
+  if (name) {
+    playerName = name
+    store.set('starboard:name', name)
+  }
+  renderNames()
+  const preset = presetOf(playerName)
+  if (preset) setRole(preset.gm ? 'gm' : 'player')
+  else { renderLog(); sheets.rerender(); ship.rerender() }
 })
 
-$('role-select').addEventListener('change', (e) => {
-  role = e.target.value
+$('role-select').addEventListener('change', (e) => setRole(e.target.value))
+function setRole(r) {
+  role = r
+  $('role-select').value = r
   store.set(roleKey, role)
   document.body.classList.toggle('is-gm', role === 'gm')
   renderLog()
@@ -146,7 +153,7 @@ $('role-select').addEventListener('change', (e) => {
   ship.rerender()
   board.rerender()
   music.rerender()
-})
+}
 document.body.classList.toggle('is-gm', role === 'gm')
 
 // ---------- Export / import JSON ----------
