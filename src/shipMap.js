@@ -54,6 +54,7 @@ const ICONS = {
   bolt: ['Énergie', 'M13 2L4 14h7l-1 8 9-12h-7z'],
   fan: ['Ventilation', 'M12 11c0-5 2-8 5-7s1 5-4 7 M13 12c5 0 8 2 7 5s-5 1-7-4 M12 13c0 5-2 8-5 7s-1-5 4-7 M11 12c-5 0-8-2-7-5s5-1 7 4'],
   monitor: ['Contrôle', 'M3 4h18v12H3z M8 20h8 M12 16v4'],
+  gear: ['Atelier / bureau de maintenance', 'M12 5a7 7 0 1 0 0 14a7 7 0 1 0 0-14zM12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5zM19 12L21.5 12M16.95 16.95L18.72 18.72M12 19L12 21.5M7.05 16.95L5.28 18.72M5 12L2.5 12M7.05 7.05L5.28 5.28M12 5L12 2.5M16.95 7.05L18.72 5.28'],
   wrench: ['Maintenance', 'M14 6a4 4 0 0 0 5 5l-9 9a2 2 0 0 1-3-3l9-9a4 4 0 0 0-2-2z'],
   shield: ['Sécurité', 'M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z'],
   shuttle: ['Hangar', 'M12 2l3 7v8l-3 3-3-3V9z M9 13l-4 4v2l4-1 M15 13l4 4v2l-4-1'],
@@ -67,7 +68,7 @@ const ICON_RULES = [
   [/laboratoire/, 'lab'], [/observ/, 'eye'], [/transit/, 'transit'], [/commandement|manoeuvre/, 'helm'],
   [/réfectoire/, 'food'], [/cuisine/, 'kitchen'], [/réfrigér/, 'cold'], [/stockage|laverie/, 'box'],
   [/toilettes|douches/, 'water'], [/incendie/, 'fire'], [/réacteur/, 'reactor'], [/propulseur/, 'thruster'],
-  [/générateurs/, 'bolt'], [/contrôle/, 'monitor'], [/maintenance|entretien|atelier/, 'wrench'],
+  [/générateurs/, 'bolt'], [/contrôle/, 'monitor'], [/maintenance|entretien|atelier/, 'gear'],
   [/armurerie/, 'shield'], [/hangar/, 'shuttle'], [/systèmes de vie/, 'pulse'],
 ]
 const TYPE_ICON = { electric: 'bolt', ventilation: 'fan', maintenance: 'wrench' }
