@@ -220,9 +220,35 @@ const titleText = (s) => (s.numberOnly && s.code ? s.code : labelOf(s))
 /** Largeur disponible pour le titre d'une forme. */
 const titleWidth = (s) => { const b = bbox(s); return (s.circle ? (b.maxX - b.minX) * 0.7 : b.maxX - b.minX) - CELL * 0.3 }
 
-/** Taille de titre (unités monde) qui fait tenir « numéro · nom » sur une ligne dans la largeur de la pièce. */
+const LINE = 1.15 // interligne des titres (× taille)
+
+/**
+ * Titre découpé en lignes qui tiennent dans la largeur de la pièce, sans couper les mots
+ * (le numéro peut aller seul sur sa ligne). ok = false si un mot seul est trop large.
+ */
+function wrapTitle(g, s, size) {
+  g.font = `600 ${size}px "Segoe UI", system-ui`
+  const maxW = titleWidth(s)
+  const numbered = /^\d/.test(s.code ?? '') && !s.numberOnly && s.name
+  const tokens = numbered ? [`${s.code} ·`, ...s.name.split(/\s+/)] : titleText(s).split(/\s+/)
+  const lines = []
+  let ok = true
+  for (const t of tokens) {
+    const last = lines.at(-1)
+    if (last !== undefined && g.measureText(`${last} ${t}`).width <= maxW) lines[lines.length - 1] = `${last} ${t}`
+    else { lines.push(t); if (g.measureText(t).width > maxW) ok = false }
+  }
+  return { lines: lines.map((l) => l.replace(/ ·$/, '')), ok, height: lines.length * size * LINE }
+}
+
+/** Taille de titre (unités monde) la plus grande qui tienne dans la pièce (largeur, et moitié de la hauteur). */
 export function autoTitleSize(g, s) {
-  return fitFont(g, titleText(s), titleWidth(s), Math.round(CELL * 1.2), 6) ?? 6
+  const b = bbox(s)
+  for (let size = Math.round(CELL * 1.2); size > 6; size -= 1) {
+    const w = wrapTitle(g, s, size)
+    if (w.ok && w.height <= (b.maxY - b.minY) * 0.5) return size
+  }
+  return 6
 }
 
 /**
@@ -321,46 +347,45 @@ export function drawPlan(g, entries, zoom, gm = false) {
   for (const s of shapes.filter((x) => isRoomType(x.type))) {
     const style = STYLE[s.type] ?? STYLE.room
     const b = bbox(s)
-    const hgt = b.maxY - b.minY
     const cx = (b.minX + b.maxX) / 2
     const cy = (b.minY + b.maxY) / 2
-    const rows = hgt / CELL
     const titleY = b.minY + (s.circle ? CELL * 1.1 : CELL * 0.5)
     const full = titleText(s)
     const isNumber = /^\d/.test(s.code ?? '')
     const maxW = titleWidth(s)
     let titleShown = false
+    let title = null // { lines, size }
     if (full && s.titleSize) {
-      // Taille choisie dans l'éditeur : une ligne, sans ajustement
-      g.font = `600 ${s.titleSize}px "Segoe UI", system-ui`
-      g.fillStyle = style.text
-      g.globalAlpha = 0.92
-      g.fillText(full, cx + (s.titleDx ?? 0), titleY + (s.titleDy ?? 0))
-      g.globalAlpha = 1
-      titleShown = true
+      // Taille choisie dans l'éditeur : passage à la ligne entre les mots pour rester dans la largeur
+      title = { lines: wrapTitle(g, s, s.titleSize).lines, size: s.titleSize }
     } else if (full && area(s) >= CELL * CELL * 3.5) {
-      // Nom complet sur une ligne, sinon sur deux (pièce assez haute), sinon le numéro seul (nom en infobulle)
-      const words = full.split(' ')
-      const half = Math.ceil(words.length / 2)
-      const twoLines = rows >= 3 && words.length > 2 ? [words.slice(0, half).join(' '), words.slice(half).join(' ')] : null
-      const options = [[full], twoLines, isNumber && [s.code]].filter(Boolean)
-      const min = Math.round(CELL * 0.24)
-      const lines = options.find((ls) => ls.every((t) => fitFont(g, t, maxW, Math.round(CELL * 0.42), ls[0] === s.code ? 6 : min)))
-      if (lines) {
-        const longest = lines.reduce((a, c) => (c.length > a.length ? c : a))
-        fitFont(g, longest, maxW, Math.round(CELL * 0.42), 6)
-        g.fillStyle = style.text
-        g.globalAlpha = 0.92
-        lines.forEach((t, i) => g.fillText(t, cx + (s.titleDx ?? 0), titleY + (s.titleDy ?? 0) + i * CELL * 0.45))
-        g.globalAlpha = 1
-        titleShown = true
+      // Plus grande taille (≤ 0,42 case) où le titre, découpé en lignes, tient dans la pièce ;
+      // sinon le numéro seul (nom en infobulle)
+      const room = b.maxY - titleY + CELL * 0.25
+      for (let size = Math.round(CELL * 0.42); size >= Math.round(CELL * 0.24) && !title; size -= 1) {
+        const w = wrapTitle(g, s, size)
+        if (w.ok && w.height <= room) title = { lines: w.lines, size }
+      }
+      if (!title && isNumber) {
+        const size = fitFont(g, s.code, maxW, Math.round(CELL * 0.42), 6)
+        if (size) title = { lines: [s.code], size }
       }
     }
+    if (title) {
+      g.font = `600 ${title.size}px "Segoe UI", system-ui`
+      g.fillStyle = style.text
+      g.globalAlpha = 0.92
+      title.lines.forEach((t, i) => g.fillText(t, cx + (s.titleDx ?? 0), titleY + (s.titleDy ?? 0) + i * title.size * LINE))
+      g.globalAlpha = 1
+      titleShown = true
+    }
     const icon = iconOf(s)
-    if (icon) {
-      const big = area(s) >= CELL * CELL * 3.5
-      const size = big ? CELL * 0.8 : CELL * 0.6
-      const iy = titleShown && rows >= 3 ? Math.max(cy, titleY + CELL) : cy
+    const big = area(s) >= CELL * CELL * 3.5
+    const size = big ? CELL * 0.8 : CELL * 0.6
+    // Logo au centre, ou sous le titre s'il le chevaucherait ; masqué s'il ne tient plus dans la pièce
+    const under = titleShown ? titleY + (s.titleDy ?? 0) + (title.lines.length - 1) * title.size * LINE + title.size * 0.6 + size * 0.55 : -Infinity
+    const iy = Math.max(cy, under)
+    if (icon && iy + size / 2 <= b.maxY - CELL * 0.05) {
       g.save()
       g.translate(cx - size / 2, iy - size / 2)
       g.scale(size / 24, size / 24)
