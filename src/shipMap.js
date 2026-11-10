@@ -381,7 +381,8 @@ export function drawPlan(g, entries, zoom, gm = false) {
     }
     const icon = iconOf(s)
     const big = area(s) >= CELL * CELL * 3.5
-    const size = big ? CELL * 0.8 : CELL * 0.6
+    // Dômes : grand logo proportionnel au rayon
+    const size = s.type === 'dome' && s.circle ? s.circle.r * 0.75 : big ? CELL * 0.8 : CELL * 0.6
     // Logo au centre, ou sous le titre s'il le chevaucherait ; masqué s'il ne tient plus dans la pièce
     const under = titleShown ? titleY + (s.titleDy ?? 0) + (title.lines.length - 1) * title.size * LINE + title.size * 0.6 + size * 0.55 : -Infinity
     const iy = Math.max(cy, under)
