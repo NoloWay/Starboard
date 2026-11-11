@@ -11,7 +11,7 @@
       <div class="brand">STARBOARD</div>
       <div class="status">
         <span id="room-label">—</span>
-        <span id="peer-count">0 pair</span>
+        <span id="peer-count">Joueurs connectés : 1</span>
       </div>
       <div class="identity">
         <select id="name-select" title="Qui es-tu ?"></select>
@@ -55,12 +55,25 @@
             <span id="ship-summary" class="crew-post">—</span>
           </li>
         </ul>
-        <h2>Équipage <button id="btn-new-sheet" class="small">+ Fiche</button></h2>
+        <h2>Équipage
+          <span class="crew-tools">
+            <select id="crew-sort" class="small" title="Trier l'équipage">
+              <option value="name">A→Z</option>
+              <option value="badge">Badge</option>
+            </select>
+            <button id="btn-new-sheet" class="small">+ Fiche</button>
+          </span>
+        </h2>
         <ul id="crew-list"></ul>
       </aside>
       <div class="stage">
         <canvas id="board"></canvas>
         <div id="scene-bar" class="stage-bar"></div>
+        <div class="search-bar">
+          <input id="token-search" list="token-names" placeholder="Chercher un personnage…" title="Entrée : centre la vue sur son jeton" />
+          <datalist id="token-names"></datalist>
+          <span id="token-search-msg" class="muted"></span>
+        </div>
         <div class="zoom-bar">
           <button id="btn-zoom-out" class="small" title="Dézoomer">−</button>
           <span id="zoom-label">100 %</span>

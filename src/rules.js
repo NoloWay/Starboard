@@ -102,7 +102,7 @@ export function skillStatsLabel(skill) {
   return skill.stats.map((k) => STAT_LABEL[k]).join(' + ') + (skill.stats.length === 1 ? ' ×2' : '')
 }
 
-// Joueurs de la table : pseudo → personnage (gm = le MJ). Sert au choix du nom,
+// Joueurs de la table : pseudo → personnage (gm = le MJ ; hide = champs de fiche cachés à ce joueur). Sert au choix du nom,
 // au rôle par défaut et au propriétaire d'une fiche dont le champ « Joueur » est vide.
 // Ordre alphabétique des pseudos ; « Observateur » = rôle neutre, sans personnage.
 export const OBSERVER = 'Observateur'
@@ -112,7 +112,7 @@ export const PLAYERS = [
   { name: 'Noloway', character: 'Arkhelos Philia' },
   { name: 'Rodag', character: 'Mulgan' },
   { name: 'Walter', gm: true },
-  { name: 'Withex', character: 'Emelisa Breaenna' },
+  { name: 'Withex', character: 'Emelisa Breaenna', hide: ['medical'] }, // ne voit pas les bilans médicaux
   { name: OBSERVER },
 ]
 const norm = (s) => (s || '').trim().toLowerCase()

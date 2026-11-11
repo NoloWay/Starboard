@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import { h, liveRender, pips } from './dom.js'
 import {
   STATS, STAT_POINTS, STAT_MAX, LEVELS, SKILLS, SKILL_GROUPS, BADGES,
-  BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel, ownerOf,
+  BASE_SKILL_LEVELS, FREE_SKILL_LEVELS, statValue, skillValue, skillStatsLabel, ownerOf, presetOf,
 } from './rules.js'
 
 // Champs texte d'une fiche : [clé, libellé, type]
@@ -83,15 +83,25 @@ export function setupSheets(ctx) {
     return isGM || !owner || owner.toLowerCase() === name.toLowerCase()
   }
 
+  // Tri de la liste (choix local) : alphabétique ou par accréditation (ordre de BADGES, du plus haut au plus bas)
+  const sortEl = document.getElementById('crew-sort')
+  try { sortEl.value = localStorage.getItem('starboard:crewSort') || 'name' } catch { /* stockage indisponible */ }
+  sortEl.addEventListener('change', () => {
+    try { localStorage.setItem('starboard:crewSort', sortEl.value) } catch { /* idem */ }
+    renderList()
+  })
+  const badgeRank = (c) => { const i = BADGES.findIndex((b) => b.name === c.get('badge')); return i < 0 ? BADGES.length : i }
+
   function renderList() {
     listEl.innerHTML = ''
     const entries = [...characters.entries()]
       .filter(([, c]) => canSee(c))
       .sort(([, a], [, b]) => {
-        // Personnages joueurs d'abord, puis ordre alphabétique
+        // A → Z : personnages joueurs d'abord, puis ordre alphabétique ; Accréditation : badge, puis nom
         const pa = ownerOf(a.get('name'), a.get('player')) ? 0 : 1
         const pb = ownerOf(b.get('name'), b.get('player')) ? 0 : 1
-        return pa - pb || a.get('name').localeCompare(b.get('name'))
+        const first = sortEl.value === 'badge' ? badgeRank(a) - badgeRank(b) : pa - pb
+        return first || a.get('name').localeCompare(b.get('name'))
       })
     const isGM = ctx.me().isGM
     for (const [id, c] of entries) {
@@ -239,7 +249,9 @@ export function setupSheets(ctx) {
     }
 
     // ---- Dossier (textes) ----
-    const notes = TEXTS.filter(([k]) => ed || String(data[k] ?? '').trim())
+    // Champs cachés à certains joueurs (préréglages PLAYERS), jamais au MJ
+    const hidden = isGM ? [] : presetOf(ctx.me().name)?.hide ?? []
+    const notes = TEXTS.filter(([k]) => !hidden.includes(k) && (ed || String(data[k] ?? '').trim()))
 
     sheetEl.append(...[
       head,

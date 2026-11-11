@@ -1,5 +1,5 @@
 import { h } from './dom.js'
-import { BADGES, DOOR_ACCESS, DOOR_LEVELS, stricterLevel } from './rules.js'
+import { BADGES, DOOR_ACCESS, DOOR_LEVELS, ownerOf, stricterLevel } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
 import { CELL, DECKS, bbox, deckSize, doorAt, drawPlan, isRoomType, labelOf, roomsAround, seedItems, shapeAt } from './shipMap.js'
 import { setupPlanEditor } from './planEditor.js'
@@ -96,6 +96,7 @@ export function setupBoard(ctx) {
 
   // ---------- Caméra (locale, une par scène) ----------
   const cams = {}
+  let flash = null // { id, until } : jeton mis en évidence après une recherche
   // Une seule caméra pour tous les étages du vaisseau : changer d'étage garde le cadrage (les étages se superposent)
   const cam = () => (cams[mode === 'ship' ? SHIP_SCENE : sceneId()] ??= { x: 0, y: 0, zoom: 1, fitted: false })
   const toWorld = (sx, sy) => ({ x: (sx - cam().x) / cam().zoom, y: (sy - cam().y) / cam().zoom })
@@ -176,8 +177,13 @@ export function setupBoard(ctx) {
 
     // Pions de la scène (ceux des personnages cachés : invisibles aux joueurs, translucides pour le MJ)
     const r = tokenSize() * 0.4
-    tokens.forEach((t) => {
+    tokens.forEach((t, id) => {
       if (!visible(t)) return
+      if (flash?.id === id && performance.now() < flash.until) { // jeton trouvé par la recherche : halo
+        g.strokeStyle = '#4ff3ff'
+        g.lineWidth = r * 0.18
+        g.beginPath(); g.arc(t.x, t.y, r * 1.7, 0, Math.PI * 2); g.stroke()
+      }
       const { label, color, hidden, isChar } = look(t)
       g.globalAlpha = hidden ? 0.45 : 1
       g.shadowColor = color
@@ -317,9 +323,11 @@ export function setupBoard(ctx) {
     const c = t.charId && characters.get(t.charId)
     if (!c) return { label: t.label, color: t.color, hidden: false, isChar: false }
     const initials = c.get('name').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
-    return { label: initials, color: BADGES.find((b) => b.name === c.get('badge'))?.color ?? '#9aa4b5', hidden: !!c.get('hidden'), isChar: true }
+    const mine = ownerOf(c.get('name'), c.get('player')).toLowerCase() === ctx.me().name.toLowerCase()
+    return { label: initials, color: BADGES.find((b) => b.name === c.get('badge'))?.color ?? '#9aa4b5', hidden: !!c.get('hidden'), isChar: true, mine }
   }
-  const visible = (t) => tokenScene(t) === sceneId() && (ctx.me().isGM || !look(t).hidden)
+  // Un joueur voit toujours le jeton de son propre personnage, même caché par le MJ
+  const visible = (t) => tokenScene(t) === sceneId() && (ctx.me().isGM || !look(t).hidden || look(t).mine)
 
   /** MJ : place le jeton d'un personnage ; s'il existe déjà (sur n'importe quelle scène), il est déplacé ici. */
   function placeCharacter(charId, world) {
@@ -589,8 +597,61 @@ export function setupBoard(ctx) {
   resize()
   renderBar()
 
+  // ---------- Recherche d'un personnage par son nom ----------
+  const norm = (str) => str.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+  /** Personnages visibles pour moi dont le nom contient la recherche (début du nom en premier). */
+  function matchCharacters(query) {
+    const q = norm(query)
+    if (!q) return []
+    return [...characters.entries()]
+      .filter(([id, c]) => ctx.me().isGM || !c.get('hidden') || look({ charId: id }).mine)
+      .filter(([, c]) => norm(c.get('name')).includes(q))
+      .sort(([, a], [, b]) => norm(b.get('name')).startsWith(q) - norm(a.get('name')).startsWith(q))
+  }
+  /**
+   * Cherche le jeton d'un personnage. Renvoie { error } ou { view, tokenId } ;
+   * l'appelant change d'onglet (view) puis appelle focusToken(tokenId).
+   */
+  function findToken(query) {
+    const [match] = matchCharacters(query)
+    if (!match) return { error: 'Aucun personnage à ce nom' }
+    const [charId, c] = match
+    const entry = [...tokens.entries()].find(([, t]) => t.charId === charId)
+    if (!entry) return { error: `${c.get('name')} : pas de jeton posé` }
+    const scene = tokenScene(entry[1])
+    if (scene.startsWith(`${SHIP_SCENE}:`)) return { view: 'ship', tokenId: entry[0], name: c.get('name') }
+    if (scene !== mapScene()) return { error: `${c.get('name')} est sur une scène non affichée (« ${scenes.get(scene)?.name ?? scene} »)` }
+    return { view: 'map', tokenId: entry[0], name: c.get('name') }
+  }
+  /** Centre et zoome la vue sur un jeton (change d'étage si besoin). */
+  function focusToken(tokenId) {
+    const t = tokens.get(tokenId)
+    if (!t) return
+    const scene = tokenScene(t)
+    if (mode === 'ship' && scene.startsWith(`${SHIP_SCENE}:`)) {
+      deck = scene.slice(SHIP_SCENE.length + 1)
+      try { localStorage.setItem('starboard:deck', deck) } catch { /* stockage indisponible */ }
+      closeDoor()
+      lastScene = sceneId()
+      editor.deckChanged()
+      renderBar()
+    }
+    const { width, height } = view()
+    const c = cam()
+    c.zoom = Math.min(ZOOM_MAX, Math.max(c.zoom, 1.5))
+    c.x = width / 2 - t.x * c.zoom
+    c.y = height / 2 - t.y * c.zoom
+    c.fitted = true
+    flash = { id: tokenId, until: performance.now() + 1500 }
+    draw()
+    setTimeout(draw, 1550)
+  }
+
   return {
     addToken,
+    matchCharacters,
+    findToken,
+    focusToken,
     rerender() {
       if (editor.active && !ctx.me().isGM) editor.setActive(false) // l'édition est réservée au MJ
       renderBar()
