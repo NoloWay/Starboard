@@ -3,7 +3,9 @@ import { joinRoom } from 'trystero/torrent'
 import { IndexeddbPersistence } from 'y-indexeddb'
 
 // Identifiant d'application : change-le pour isoler ton jeu des autres utilisateurs de Trystero.
-const APP_ID = 'Noloway'
+// En développement (npm run dev), un identifiant à part : la version locale ne peut jamais rejoindre
+// une salle du site en ligne, même avec le même #code.
+const APP_ID = import.meta.env.DEV ? 'Noloway-dev' : 'Noloway'
 
 /**
  * Ouvre (ou rejoint) une salle.

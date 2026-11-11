@@ -105,7 +105,7 @@ Interprétations et écarts par rapport à l'Excel de gestion :
 - Dans de rares cas (réseau d'entreprise, certaines 4G) la connexion directe WebRTC échoue : prévoir un relais TURN gratuit (Cloudflare / Metered) dans la config Trystero (`rtcConfig`) si ça arrive.
 - Les relais de signalisation publics sont gratuits mais sans garantie. Si l'un d'eux tombe, changer de stratégie Trystero (`trystero/nostr`, `trystero/mqtt`, `trystero/torrent`).
 - Pas de sécurité forte : tout pair connecté à la salle peut modifier l'état. Suffisant entre amis ; le « secret » d'une salle est son identifiant dans l'URL.
-- `APP_ID` dans `src/net.js` doit être changé pour un identifiant unique au projet avant la mise en ligne.
+- `APP_ID` (`src/net.js`) = 'Noloway' ; en `npm run dev` il devient 'Noloway-dev' : la version locale ne rejoint jamais une salle du site en ligne (données locales et en ligne séparées, échanger par Exporter / Importer).
 
 ## Conventions
 - JavaScript moderne (ES modules), sans framework tant que ce n'est pas nécessaire. Si l'interface grossit (fiches, panneaux), envisager Svelte ou Preact (toujours buildé en statique).
