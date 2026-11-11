@@ -470,3 +470,9 @@ body:not(.is-gm) .gm-only { display: none; }
 .search-bar { bottom: 12px; left: 12px; }
 .search-bar input { width: 200px; }
 #token-search-msg:empty { display: none; }
+.playlists-head { margin-top: 10px; }
+.playlists-head b { flex: 1; font-size: 0.8rem; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+.music-playlist summary { display: flex; gap: 6px; align-items: center; cursor: pointer; padding: 3px 0; }
+.music-playlist summary span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.music-playlist summary .current { color: var(--accent); }
+.music-playlist > .small { margin: 2px 0 6px; }

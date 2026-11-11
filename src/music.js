@@ -3,12 +3,56 @@ import { h } from './dom.js'
 // Musique d'ambiance : le MJ choisit une vidéo YouTube, elle est jouée en même temps chez tout le monde.
 //
 // Données partagées :
-//   music       : { videoId, playing, startedAt (Date.now() du lancement), position (s au lancement), loop }
-//   musicTracks : id → { name, videoId, start, order }   (pistes enregistrées par le MJ)
+//   music          : { videoId, playing, startedAt (Date.now() du lancement), position (s au lancement), loop,
+//                     playlistId, index (morceau joué dans la playlist ; absents = piste seule) }
+//   musicTracks    : id → { name, videoId, start, order }   (pistes enregistrées par le MJ)
+//   musicPlaylists : id → { name, order, tracks: [{ videoId, name }] }
+// Playlist : à la fin d'un morceau, n'importe quel client passe au suivant (même valeur écrite par tous,
+// donc sans conflit) ; « En boucle » reprend la playlist au début (ou la piste seule).
 // Chaque joueur règle son propre volume (localStorage). Le lecteur YouTube reste visible
 // (les conditions de YouTube imposent un lecteur d'au moins 200 × 200 px).
 
 const DRIFT = 2 // écart toléré (secondes) avant de recaler la lecture
+
+/** Identifiant de playlist d'un lien YouTube (…&list=PL…), ou null. */
+export function parsePlaylist(input) {
+  try { return new URL(String(input).trim()).searchParams.get('list') } catch { return null }
+}
+
+/** Titre d'une vidéo (oEmbed public de YouTube, sans clé). */
+async function videoTitle(videoId) {
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=${videoId}`)
+    return r.ok ? (await r.json()).title : null
+  } catch { return null }
+}
+
+/** Liste des vidéos d'une playlist YouTube, via un lecteur caché (l'API IFrame la donne sans clé). */
+function fetchPlaylistIds(YT, listId) {
+  return new Promise((resolve) => {
+    const holder = h('div', { style: 'position:absolute;left:-9999px;width:200px;height:200px' }, h('div'))
+    document.body.append(holder)
+    let tries = 0
+    let p = null
+    const done = (ids) => { try { p?.destroy() } catch { /* déjà détruit */ } holder.remove(); resolve(ids) }
+    p = new YT.Player(holder.firstChild, {
+      width: 200, height: 200,
+      playerVars: { listType: 'playlist', list: listId, autoplay: 0 },
+      events: {
+        onReady: () => {
+          const poll = () => {
+            const ids = p.getPlaylist()
+            if (ids?.length) return done(ids)
+            if (++tries > 40) return done([])
+            setTimeout(poll, 250)
+          }
+          poll()
+        },
+        onError: () => done([]),
+      },
+    })
+  })
+}
 
 /** Extrait l'identifiant et le temps de départ d'un lien YouTube (ou d'un identifiant brut). */
 export function parseYouTube(input) {
@@ -46,6 +90,7 @@ function loadYouTubeApi() {
 export function setupMusic(ctx) {
   const music = ctx.doc.getMap('music')
   const tracks = ctx.doc.getMap('musicTracks')
+  const playlists = ctx.doc.getMap('musicPlaylists')
   const root = document.getElementById('music')
 
   let player = null
@@ -65,7 +110,7 @@ export function setupMusic(ctx) {
     if (!m.playing) return Number(m.position) || 0
     let pos = (Number(m.position) || 0) + (Date.now() - (Number(m.startedAt) || Date.now())) / 1000
     const duration = ready ? player.getDuration() : 0
-    if (m.loop && duration > 0) pos %= duration
+    if (m.loop && !m.playlistId && duration > 0) pos %= duration
     return pos
   }
 
@@ -93,7 +138,10 @@ export function setupMusic(ctx) {
     if (m.playing) {
       const duration = player.getDuration()
       const target = expected()
-      if (!m.loop && duration > 0 && target >= duration) return // morceau terminé
+      if ((!m.loop || m.playlistId) && duration > 0 && target >= duration) { // morceau terminé
+        if (m.playlistId) next(m.index)
+        return
+      }
       if (Math.abs(player.getCurrentTime() - target) > DRIFT) player.seekTo(target, true)
       if (ps !== YTS.PLAYING && ps !== YTS.BUFFERING) {
         player.playVideo()
@@ -115,8 +163,10 @@ export function setupMusic(ctx) {
   }
 
   // ---------- Commandes du MJ ----------
-  function play(videoId, start = 0) {
+  function play(videoId, start = 0, playlistId = null, index = 0) {
     ctx.doc.transact(() => {
+      music.set('playlistId', playlistId)
+      music.set('index', index)
       music.set('videoId', videoId)
       music.set('position', start)
       music.set('startedAt', Date.now())
@@ -132,7 +182,48 @@ export function setupMusic(ctx) {
     ctx.doc.transact(() => { music.set('startedAt', Date.now()); music.set('playing', true) })
   }
   function stop() {
-    ctx.doc.transact(() => { music.set('videoId', null); music.set('playing', false); music.set('position', 0) })
+    ctx.doc.transact(() => { music.set('videoId', null); music.set('playlistId', null); music.set('playing', false); music.set('position', 0) })
+  }
+  /** Joue le morceau i d'une playlist. */
+  function playAt(playlistId, i) {
+    const t = playlists.get(playlistId)?.tracks?.[i]
+    if (t) play(t.videoId, 0, playlistId, i)
+    else stop()
+  }
+  /** Morceau suivant / précédent (from = morceau en cours : évite d'avancer deux fois si plusieurs clients le voient finir). */
+  function next(from = state().index, step = 1) {
+    const m = state()
+    if (!m.playlistId || m.index !== from) return
+    const n = playlists.get(m.playlistId)?.tracks?.length ?? 0
+    let i = from + step
+    if (i >= n || i < 0) {
+      if (!m.loop && step > 0) return stop()
+      i = (i + n) % n
+    }
+    playAt(m.playlistId, i)
+  }
+  const nextOrder = (map) => Math.max(0, ...[...map.values()].map((t) => t.order ?? 0)) + 1
+  function newPlaylist(name, list = []) {
+    playlists.set(crypto.randomUUID(), { name, order: nextOrder(playlists), tracks: list })
+  }
+  let importing = false
+  const openLists = new Set() // playlists dépliées (local : le panneau est redessiné toutes les 5 s)
+  async function importPlaylist(link) {
+    const listId = parsePlaylist(link)
+    if (!listId) return alert('Lien de playlist YouTube non reconnu (il doit contenir « list= »).')
+    importing = true
+    render()
+    const ids = await fetchPlaylistIds(await loadYouTubeApi(), listId)
+    if (!ids.length) {
+      importing = false
+      render()
+      return alert('Playlist introuvable ou privée.')
+    }
+    const titles = await Promise.all(ids.map(videoTitle))
+    importing = false
+    const name = prompt(`${ids.length} morceaux trouvés. Nom de la playlist ?`, 'Playlist YouTube')?.trim()
+    if (name) newPlaylist(name, ids.map((videoId, i) => ({ videoId, name: titles[i] ?? `Morceau ${i + 1}` })))
+    render()
   }
 
   function fromInput(value) {
@@ -145,8 +236,13 @@ export function setupMusic(ctx) {
   const playerBox = h('div', { class: 'music-player' }, h('div', { id: 'yt-player' }))
   const controls = h('div', { class: 'music-controls' })
   // Saisie du lien (MJ) : construite une seule fois pour ne pas perdre ce qu'on tape lors des rafraîchissements
-  const url = h('input', { placeholder: 'Lien YouTube', class: 'music-url' })
-  const launch = () => { const p = fromInput(url.value); if (p) { play(p.videoId, p.start); url.value = '' } }
+  const url = h('input', { placeholder: 'Lien YouTube (vidéo ou playlist)', class: 'music-url' })
+  const launch = () => {
+    // Lien de playlist sans vidéo : import comme playlist du site
+    if (parsePlaylist(url.value) && !parseYouTube(url.value)) { importPlaylist(url.value); url.value = ''; return }
+    const p = fromInput(url.value)
+    if (p) { play(p.videoId, p.start); url.value = '' }
+  }
   url.addEventListener('keydown', (e) => { if (e.key === 'Enter') launch() })
   const urlRow = h('div', { class: 'music-row' }, url, h('button', { class: 'small', onclick: launch }, 'Lancer'))
   const gmControls = h('div', { class: 'music-controls' })
@@ -165,12 +261,14 @@ export function setupMusic(ctx) {
     const m = state()
     const isGM = ctx.me().isGM
     const title = ready && m.videoId ? player.getVideoData()?.title : ''
+    const pl = m.playlistId && playlists.get(m.playlistId)
     controls.innerHTML = ''
     playerBox.hidden = !m.videoId
 
     controls.append(...[
       h('div', { class: 'music-title' }, m.videoId ? (title || 'Chargement…') : 'Aucune musique',
         m.videoId && !m.playing && h('span', { class: 'muted' }, ' · en pause')),
+      pl && h('div', { class: 'muted small-text' }, `Playlist « ${pl.name} » · ${(m.index ?? 0) + 1} / ${pl.tracks.length}`),
       error && h('p', { class: 'bad small-text' }, error),
       blocked && h('button', {
         class: 'music-unlock',
@@ -189,6 +287,8 @@ export function setupMusic(ctx) {
           ? h('button', { class: 'small', onclick: pause }, '❚❚ Pause')
           : h('button', { class: 'small', onclick: resume }, '▶ Reprendre'),
         h('button', { class: 'small', onclick: stop }, '■ Arrêter'),
+        pl && h('button', { class: 'small', title: 'Morceau précédent', onclick: () => next(m.index, -1) }, '⏮'),
+        pl && h('button', { class: 'small', title: 'Morceau suivant', onclick: () => next(m.index, 1) }, '⏭'),
         h('label', { class: 'check' },
           h('input', { type: 'checkbox', checked: m.loop !== false, onchange: (e) => music.set('loop', e.target.checked) }),
           'En boucle'),
@@ -208,6 +308,29 @@ export function setupMusic(ctx) {
             onclick: () => play(t.videoId, t.start ?? 0),
           }, `▶ ${t.name}`),
           h('button', { class: 'icon', title: 'Retirer de la liste', onclick: () => tracks.delete(id) }, '×')))),
+      // Playlists du site
+      h('div', { class: 'music-row playlists-head' }, h('b', {}, 'Playlists'),
+        h('button', { class: 'small', onclick: () => { const n = prompt('Nom de la playlist ?')?.trim(); if (n) newPlaylist(n) } }, '+ Nouvelle'),
+        h('button', {
+          class: 'small', title: 'Créer une playlist du site à partir d’une playlist YouTube publique ou non répertoriée',
+          disabled: importing,
+          onclick: () => { const l = prompt('Lien de la playlist YouTube ?'); if (l) importPlaylist(l) },
+        }, importing ? 'Import…' : '↧ YouTube')),
+      ...[...playlists.entries()].sort(([, a], [, b]) => a.order - b.order).map(([pid, p]) => h('details', { class: 'music-playlist', open: openLists.has(pid), ontoggle: (e) => openLists[e.target.open ? 'add' : 'delete'](pid) },
+        h('summary', {},
+          h('span', { class: pid === m.playlistId ? 'current' : '' }, `${p.name} (${p.tracks.length})`),
+          h('button', { class: 'small', title: 'Lancer la playlist pour tout le monde', onclick: (e) => { e.preventDefault(); playAt(pid, 0) } }, '▶'),
+          h('button', { class: 'icon', title: 'Supprimer la playlist', onclick: (e) => { e.preventDefault(); if (confirm(`Supprimer « ${p.name} » ?`)) playlists.delete(pid) } }, '×')),
+        h('ul', { class: 'music-tracks' }, p.tracks.map((t, i) => h('li', {},
+          h('button', {
+            class: `link${pid === m.playlistId && i === m.index ? ' current' : ''}`, title: 'Lancer ce morceau',
+            onclick: () => playAt(pid, i),
+          }, `${i + 1}. ${t.name}`),
+          h('button', { class: 'icon', title: 'Retirer', onclick: () => playlists.set(pid, { ...p, tracks: p.tracks.filter((_, j) => j !== i) }) }, '×')))),
+        m.videoId && h('button', {
+          class: 'small', title: 'Ajouter la musique en cours à cette playlist',
+          onclick: () => playlists.set(pid, { ...p, tracks: [...p.tracks, { videoId: m.videoId, name: title || 'Morceau' }] }),
+        }, '+ Musique en cours'))),
     ].filter(Boolean))
   }
 
@@ -225,7 +348,8 @@ export function setupMusic(ctx) {
         },
         onStateChange: (e) => {
           // Fin du morceau : on relance si la boucle est active
-          if (e.data === YT.PlayerState.ENDED && state().loop && state().playing) {
+          if (e.data === YT.PlayerState.ENDED && state().playing && state().playlistId) next(state().index)
+          else if (e.data === YT.PlayerState.ENDED && state().loop && state().playing) {
             player.seekTo(0, true)
             player.playVideo()
           }
@@ -244,6 +368,7 @@ export function setupMusic(ctx) {
 
   music.observe(sync)
   tracks.observe(render)
+  playlists.observe(render)
   setInterval(sync, 5000) // recalage régulier
   render()
 

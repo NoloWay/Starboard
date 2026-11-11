@@ -177,6 +177,7 @@ $('btn-export').addEventListener('click', () => {
     log: log.toJSON(),
     characters: doc.getMap('characters').toJSON(),
     musicTracks: doc.getMap('musicTracks').toJSON(),
+    musicPlaylists: doc.getMap('musicPlaylists').toJSON(),
     doorLevels: doc.getMap('doorLevels').toJSON(),
     plan: doc.getMap('plan').toJSON(),
     ship: doc.getMap('ship').toJSON(),
@@ -203,8 +204,8 @@ $('file-import').addEventListener('change', async (e) => {
     alert('Fichier JSON illisible.')
     return
   }
-  const parts = ['scenes', 'tokens', 'log', 'characters', 'ship', 'musicTracks', 'doorLevels', 'plan'].filter((k) => data[k] && Object.keys(data[k]).length)
-  const names = { scenes: 'scènes et cartes', tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau', musicTracks: 'pistes de musique', doorLevels: 'accréditations des portes (ancien format)', plan: 'plan du vaisseau' }
+  const parts = ['scenes', 'tokens', 'log', 'characters', 'ship', 'musicTracks', 'musicPlaylists', 'doorLevels', 'plan'].filter((k) => data[k] && Object.keys(data[k]).length)
+  const names = { scenes: 'scènes et cartes', tokens: 'pions', log: 'journal', characters: 'fiches', ship: 'vaisseau', musicTracks: 'pistes de musique', musicPlaylists: 'playlists', doorLevels: 'accréditations des portes (ancien format)', plan: 'plan du vaisseau' }
   if (!parts.length) return alert('Aucune donnée Starboard dans ce fichier.')
   if (!confirm(`Remplacer pour tout le monde : ${parts.map((k) => names[k]).join(', ')} ?`)) return
   if (parts.includes('scenes')) board.importData(data)
@@ -221,7 +222,7 @@ $('file-import').addEventListener('change', async (e) => {
   if (parts.includes('characters')) replaceCharacters(doc, data.characters)
   if (parts.includes('ship')) writeShip(doc, data.ship)
   // Collections simples (id → valeur) : remplacées telles quelles
-  for (const k of ['musicTracks', 'doorLevels', 'plan'].filter((p) => parts.includes(p))) {
+  for (const k of ['musicTracks', 'musicPlaylists', 'doorLevels', 'plan'].filter((p) => parts.includes(p))) {
     const map = doc.getMap(k)
     doc.transact(() => { map.clear(); Object.entries(data[k]).forEach(([id, v]) => map.set(id, v)) })
   }
