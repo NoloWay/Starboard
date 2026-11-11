@@ -476,3 +476,5 @@ body:not(.is-gm) .gm-only { display: none; }
 .music-playlist summary span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .music-playlist summary .current { color: var(--accent); }
 .music-playlist > .small { margin: 2px 0 6px; }
+.crew h2 { gap: 6px; }
+.crew-tools button { white-space: nowrap; }

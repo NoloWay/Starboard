@@ -1,7 +1,10 @@
 import * as Y from 'yjs'
 import { h, liveRender } from './dom.js'
 import { DOOR_LEVELS } from './rules.js'
-import { CELL, DECKS, SHAPE_TYPES, ICON_NAMES, bbox, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor, autoTitleSize } from './shipMap.js'
+import {
+  CELL, DECKS, SHAPE_TYPES, ICON_NAMES, bbox, shapeAt, doorAt, cameraAt, shapePath, isRoomType, titleAnchor, autoTitleSize,
+  attachToWall, resolveItem, wallParam, wallSeg,
+} from './shipMap.js'
 
 // Éditeur du plan du Gaïa (MJ) : formes, portes, caméras. Toutes les modifications vont dans la carte
 // `plan` du Y.Doc (partagées en direct, annulables avec Ctrl+Z).
@@ -14,7 +17,8 @@ const TOOLS = [
   ['triangle', '△', 'Triangle : glisser du centre vers un sommet'],
   ['circle', '◯', 'Cercle : glisser du centre vers le bord'],
   ['poly', '✎', 'Polyligne : cliquer pour poser chaque sommet, puis recliquer sur le premier (ou Entrée, double-clic) pour refermer'],
-  ['door', '⊟', 'Porte : glisser le long du mur'],
+  ['door', '⊟', 'Porte : glisser le long du mur d’une pièce (elle y reste accrochée)'],
+  ['window', '▤', 'Vitre : glisser le long du mur d’une pièce (elle y reste accrochée)'],
   ['camera', '◉', 'Caméra : cliquer pour la poser, puis l’orienter avec sa poignée'],
 ]
 
@@ -78,8 +82,17 @@ function moveEdge(pts, i, dx, dy, ortho) {
   return P
 }
 
+const LINKED = new Set(['hull', 'engine']) // même nom = même objet sur tous les étages
+const onWall = (it) => it.kind === 'door' || it.kind === 'window'
+/** Coque verrouillée par défaut : un glisser dessus déplace la vue, pas la coque. */
+const isLocked = (it) => it?.kind === 'shape' && (it.locked ?? it.type === 'hull')
+const geomOf = (it) => (it.circle ? { circle: it.circle } : { pts: it.pts })
+const centerOf = (it) => { const b = bbox(it); return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2] }
+/** Valeur v (ou v ± 1) la plus proche de ref : position sur un cercle, qui boucle. */
+const nearTurn = (v, ref) => [v - 1, v, v + 1].reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a))
+
 function translate(it, dx, dy) {
-  if (it.kind === 'door') { const [a, b, c, d] = it.seg; return { ...it, seg: [a + dx, b + dy, c + dx, d + dy].map(round) } }
+  if (onWall(it)) { const [a, b, c, d] = it.seg; return { ...it, seg: [a + dx, b + dy, c + dx, d + dy].map(round) } }
   if (it.kind === 'camera') return { ...it, x: round(it.x + dx), y: round(it.y + dy) }
   if (it.circle) return { ...it, circle: { ...it.circle, x: round(it.circle.x + dx), y: round(it.circle.y + dy) } }
   return { ...it, pts: it.pts.map(([x, y]) => [round(x + dx), round(y + dy)]) }
@@ -100,21 +113,88 @@ export function setupPlanEditor(ctx) {
   let action = null // glisser en cours : move | handle | create
   const undo = new Y.UndoManager(ctx.plan, { captureTimeout: 400 }) // le chargement initial (origine 'seed') n'est pas annulable
 
-  const get = (id) => ctx.plan.get(id)
-  const set = (id, it) => ctx.plan.set(id, it)
+  const raw = (id) => ctx.plan.get(id)
+  /** Élément ; portes et vitres avec leur position réelle sur le mur de leur pièce. */
+  const get = (id) => { const it = raw(id); return (it?.host && resolveItem(it, raw(it.host))) || it }
+  const hostedBy = (hostId) => [...ctx.plan.entries()].filter(([, x]) => x.host === hostId)
+
+  /**
+   * Écrit un élément. Pour une forme dont la géométrie change :
+   * - ses portes / vitres sont raccrochées au côté le plus proche si le nombre de côtés change ;
+   * - coque et propulseurs : la même géométrie va aux objets de même type et de même nom des autres étages.
+   */
+  function set(id, { arc, ...it }) {
+    const old = raw(id)
+    ctx.plan.set(id, it)
+    if (it.kind !== 'shape' || old?.kind !== 'shape') return
+    if (JSON.stringify(geomOf(old)) === JSON.stringify(geomOf(it)) && old.radius === it.radius) return
+    if (!!old.circle !== !!it.circle || (old.pts && it.pts && old.pts.length !== it.pts.length)) {
+      for (const [cid, c] of hostedBy(id)) {
+        const seg = resolveItem(c, old)?.seg ?? c.seg
+        const at = seg && attachToWall([[id, it]], seg, Infinity)
+        if (at) ctx.plan.set(cid, { ...c, ...at, seg })
+        else ctx.plan.delete(cid)
+      }
+    }
+    if (LINKED.has(it.type) && it.name) {
+      const [ox, oy] = centerOf(old)
+      for (const d of DECKS.filter((x) => x !== it.deck)) {
+        ctx.ensureSeeded(d)
+        const twin = [...ctx.plan.entries()]
+          .filter(([, x]) => x.deck === d && x.kind === 'shape' && x.type === it.type && x.name === it.name)
+          .map(([tid, x]) => [tid, x, Math.hypot(centerOf(x)[0] - ox, centerOf(x)[1] - oy)])
+          .sort((a, b) => a[2] - b[2])[0]
+        if (twin) {
+          const { pts, circle, ...rest } = twin[1]
+          ctx.plan.set(twin[0], { ...rest, ...geomOf(it), radius: it.radius })
+        }
+      }
+    }
+  }
+  /** Supprime un élément et, pour une pièce, les portes et vitres de ses murs. */
+  function del(id) {
+    ctx.plan.delete(id)
+    for (const [cid] of hostedBy(id)) ctx.plan.delete(cid)
+  }
+  /** Raccroche aux murs les portes d'un étage copié avant que les portes ne suivent leurs pièces. */
+  function attachLoose() {
+    const entries = [...ctx.plan.entries()].filter(([, x]) => x.deck === ctx.deck())
+    const loose = entries.filter(([, x]) => onWall(x) && !x.host)
+    if (!loose.length) return
+    ctx.doc.transact(() => loose.forEach(([id, x]) => {
+      const at = attachToWall(entries, x.seg)
+      if (at) ctx.plan.set(id, { ...x, ...at })
+    }), 'seed') // origine 'seed' : pas dans l'historique d'annulation
+  }
   const shapesZ = () => ctx.entries().filter(([, it]) => it.kind === 'shape').map(([, it]) => it.z ?? 0)
 
   // ---------- Copier / coller (entre étages) ----------
   let clipboard = [] // éléments copiés (Ctrl+C)
 
-  /** Copie un élément sur un étage (même position, au premier plan) et renvoie son nouvel identifiant. */
-  function copyTo(it, deck) {
+  /**
+   * Copie un élément sur un étage (même position, au premier plan) et renvoie son nouvel identifiant.
+   * Porte / vitre : sur la copie de sa pièce si elle est copiée aussi (idMap), sinon sur le mur le plus proche
+   * de l'étage cible (pas de copie s'il n'y a pas de mur à cet endroit).
+   */
+  function copyTo(it, deck, idMap = new Map(), oldId = null) {
     if (!it) return null
     ctx.ensureSeeded(deck)
+    let wall = {}
+    if (it.host) {
+      const host = idMap.get(it.host) ?? (deck === it.deck ? it.host : null)
+      wall = host ? { host } : attachToWall([...ctx.plan.entries()].filter(([, x]) => x.deck === deck), it.seg)
+      if (!wall) return null
+    }
     const zs = [...ctx.plan.values()].filter((x) => x.deck === deck && x.kind === 'shape').map((x) => x.z ?? 0)
     const id = crypto.randomUUID()
-    set(id, { ...it, deck, ...(it.kind === 'shape' ? { z: Math.max(0, ...zs) + 1 } : {}) })
+    if (oldId) idMap.set(oldId, id)
+    set(id, { ...it, ...wall, deck, ...(it.kind === 'shape' ? { z: Math.max(0, ...zs) + 1 } : {}) })
     return id
+  }
+  /** Copie plusieurs éléments [[id, élément]…] : les pièces d'abord, pour y raccrocher leurs portes et vitres. */
+  function copyAll(pairs, deck) {
+    const idMap = new Map()
+    return [...pairs].sort(([, a], [, b]) => !!a.host - !!b.host).map(([oid, it]) => copyTo(it, deck, idMap, oid)).filter(Boolean)
   }
   const snap = (w, free) => (free ? { x: round(w.x), y: round(w.y) } : { x: Math.round(w.x / SNAP) * SNAP, y: Math.round(w.y / SNAP) * SNAP })
 
@@ -164,7 +244,7 @@ export function setupPlanEditor(ctx) {
   function field(label, input) { return h('label', { class: 'field' }, h('span', {}, label), input) }
 
   function removeGroup() {
-    ctx.doc.transact(() => group.forEach((id) => ctx.plan.delete(id)))
+    ctx.doc.transact(() => group.forEach((id) => del(id)))
     select(null)
   }
 
@@ -175,7 +255,7 @@ export function setupPlanEditor(ctx) {
         h('h4', {}, `${group.size} éléments sélectionnés`),
         h('p', { class: 'hint' }, 'Glisser l’un d’eux ou utiliser les flèches pour tout déplacer ; tirer un coin du cadre pour tout redimensionner (Maj : proportions gardées). Ctrl+clic pour ajouter ou retirer un élément.'),
         h('div', { class: 'tool-row' }, target,
-          h('button', { class: 'small', title: 'Copier la sélection sur l’étage choisi, au même endroit', onclick: () => groupItems().forEach(([, it]) => copyTo(it, target.value)) }, 'Copier vers')),
+          h('button', { class: 'small', title: 'Copier la sélection sur l’étage choisi, au même endroit', onclick: () => copyAll(groupItems(), target.value) }, 'Copier vers')),
         h('button', { class: 'small danger', onclick: removeGroup }, 'Supprimer la sélection'))
       return
     }
@@ -185,7 +265,7 @@ export function setupPlanEditor(ctx) {
       return
     }
     const patch = (changes) => set(selected, { ...get(selected), ...changes })
-    const remove = h('button', { class: 'small danger', onclick: () => { ctx.plan.delete(selected); select(null) } }, 'Supprimer')
+    const remove = h('button', { class: 'small danger', onclick: () => { ctx.doc.transact(() => del(selected)); select(null) } }, 'Supprimer')
     // Copier vers un autre étage (même position)
     const target = h('select', {}, DECKS.filter((d) => d !== ctx.deck()).map((d) => h('option', { value: d }, `Étage ${d.replace('-', '−')}`)))
     const copyRow = h('div', { class: 'tool-row' }, target,
@@ -202,6 +282,10 @@ export function setupPlanEditor(ctx) {
         field('Logo', h('select', { onchange: (e) => patch({ icon: e.target.value }) },
           [['', 'Automatique (d’après le nom)'], ['none', 'Aucun'], ...Object.entries(ICON_NAMES)]
             .map(([k, l]) => h('option', { value: k, selected: k === (it.icon ?? '') }, l)))),
+        it.type === 'hull' && h('label', { class: 'check', title: 'Verrouillée : un glisser sur la coque déplace la vue au lieu de la coque' },
+          h('input', { type: 'checkbox', checked: isLocked(it), onchange: (e) => patch({ locked: e.target.checked }) }),
+          ' Verrouillée (ne bouge pas)'),
+        LINKED.has(it.type) && h('p', { class: 'hint' }, 'Liée aux objets de même type et de même nom des autres étages : ses modifications s’y appliquent aussi.'),
         isRoomType(it.type) && it.code && h('label', { class: 'check' },
           h('input', { type: 'checkbox', checked: !!it.numberOnly, onchange: (e) => patch({ numberOnly: e.target.checked }) }),
           ' Numéro seul (sans le nom)'),
@@ -238,6 +322,11 @@ export function setupPlanEditor(ctx) {
         h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!it.access, onchange: (e) => patch({ access: e.target.checked }) }),
           'Trappe technique (pointillés)'),
         copyRow, remove)
+    } else if (it.kind === 'window') {
+      add(props,
+        h('h4', {}, 'Vitre'),
+        h('p', { class: 'hint' }, 'Accrochée au mur de sa pièce, elle la suit. Glisser pour la faire coulisser, tirer ses extrémités pour l’allonger.'),
+        copyRow, remove)
     } else if (it.kind === 'camera') {
       add(props,
         h('h4', {}, 'Caméra de surveillance'),
@@ -272,7 +361,7 @@ export function setupPlanEditor(ctx) {
 
   // ---------- Groupe : cadre englobant et mise à l'échelle ----------
   function itemBox(it) {
-    if (it.kind === 'door') { const [x1, y1, x2, y2] = it.seg; return { minX: Math.min(x1, x2), minY: Math.min(y1, y2), maxX: Math.max(x1, x2), maxY: Math.max(y1, y2) } }
+    if (onWall(it)) { const [x1, y1, x2, y2] = it.seg; return { minX: Math.min(x1, x2), minY: Math.min(y1, y2), maxX: Math.max(x1, x2), maxY: Math.max(y1, y2) } }
     if (it.kind === 'camera') return { minX: it.x - CELL * 0.3, minY: it.y - CELL * 0.3, maxX: it.x + CELL * 0.3, maxY: it.y + CELL * 0.3 }
     return bbox(it)
   }
@@ -305,7 +394,7 @@ export function setupPlanEditor(ctx) {
 
   // ---------- Poignées ----------
   function handles(it) {
-    if (it.kind === 'door') return [{ k: 'end', i: 0, x: it.seg[0], y: it.seg[1] }, { k: 'end', i: 1, x: it.seg[2], y: it.seg[3] }]
+    if (onWall(it)) return [{ k: 'end', i: 0, x: it.seg[0], y: it.seg[1] }, { k: 'end', i: 1, x: it.seg[2], y: it.seg[3] }]
     if (it.kind === 'camera') {
       const t = ((it.angle ?? 0) * Math.PI) / 180
       return [{ k: 'rotate', x: it.x + Math.cos(t) * CELL * 0.9, y: it.y + Math.sin(t) * CELL * 0.9 }]
@@ -331,7 +420,17 @@ export function setupPlanEditor(ctx) {
       if (!free) a = Math.round(a / 15) * 15
       return { ...it, angle: Math.round(a) }
     }
-    // extrémité de porte
+    // extrémité de porte / vitre accrochée : glisse le long de son mur
+    if (it.host) {
+      const host = raw(it.host)
+      if (!host) return it
+      let t = wallParam(host, it.edge, p.x, p.y)
+      if (host.circle) t = nearTurn(t, hd.i ? it.t1 : it.t0)
+      const [t0, t1] = hd.i ? [it.t0, t] : [t, it.t1]
+      if (Math.abs(t1 - t0) < 0.02) return it
+      return { ...it, t0: Math.min(t0, t1), t1: Math.max(t0, t1) }
+    }
+    // extrémité de porte libre (ancien format)
     const s = [...it.seg]
     const o = hd.i ? 0 : 2 // l'autre extrémité
     let [x, y] = [p.x, p.y]
@@ -348,11 +447,15 @@ export function setupPlanEditor(ctx) {
     const base = { deck, kind: 'shape', type: 'room', code: '', name: 'Nouvelle pièce', icon: '', radius: 0.3, z }
     const r = Math.hypot(to.x - from.x, to.y - from.y)
     if (tool === 'camera') return { deck, kind: 'camera', x: from.x, y: from.y, angle: 0 }
-    if (tool === 'door') {
-      let [x, y] = [to.x, to.y]
-      if (ortho) { if (Math.abs(x - from.x) > Math.abs(y - from.y)) y = from.y; else x = from.x }
-      if (Math.hypot(x - from.x, y - from.y) < CELL * 0.4) return null
-      return { deck, kind: 'door', seg: [from.x, from.y, x, y].map(round), level: 'Vert', defaultLevel: 'Vert', access: false }
+    if (tool === 'door' || tool === 'window') {
+      // Toujours sur le mur d'une pièce : pas de porte ni de vitre dans le vide
+      const at = attachToWall(ctx.entries(), [from.x, from.y, to.x, to.y], CELL * 0.5)
+      const host = at && new Map(ctx.entries()).get(at.host)
+      if (!host) return null
+      const seg = wallSeg(host, at.edge, at.t0, at.t1)
+      if (Math.hypot(seg[2] - seg[0], seg[3] - seg[1]) < CELL * 0.3) return null
+      const wall = { deck, ...at, seg }
+      return tool === 'window' ? { ...wall, kind: 'window' } : { ...wall, kind: 'door', level: 'Vert', defaultLevel: 'Vert', access: false }
     }
     if (tool === 'rect') {
       if (Math.abs(to.x - from.x) < CELL * 0.4 || Math.abs(to.y - from.y) < CELL * 0.4) return null
@@ -415,28 +518,34 @@ export function setupPlanEditor(ctx) {
     }
     const tol = 9 / ctx.zoom()
     const near = (hd) => Math.hypot(hd.x - w.x, hd.y - w.y) <= tol
+    // Ce que bougent un glisser, un redimensionnement ou les flèches : ni la coque verrouillée,
+    // ni les portes / vitres accrochées (elles suivent leur pièce)
+    const movable = () => groupItems().filter(([, it]) => !it.host && !isLocked(it))
     if (multi() && !e.ctrlKey) {
       const corner = groupCorners().find(near)
       if (corner) {
-        action = { kind: 'gscale', corner, starts: groupItems(), from: p }
+        action = { kind: 'gscale', corner, starts: movable(), from: p }
         return true
       }
     }
     const sel = !multi() && selected && get(selected)
-    const hd = sel && handles(sel).find(near)
+    const hd = sel && !isLocked(sel) && handles(sel).find(near)
     if (hd) {
       action = { kind: 'handle', id: selected, hd, start: sel, from: p }
       return true
     }
     const entries = ctx.entries()
-    const hit = doorAt(entries, w.x, w.y, Math.max(tol, CELL * 0.2)) ?? cameraAt(entries, w.x, w.y) ?? shapeAt(ctx.g, entries, w.x, w.y)
+    const hit = doorAt(entries, w.x, w.y, Math.max(tol, CELL * 0.2), ['door', 'window']) ?? cameraAt(entries, w.x, w.y) ?? shapeAt(ctx.g, entries, w.x, w.y)
     if (e.ctrlKey) { // Ctrl+clic : ajoute / retire du groupe, sans déplacer
       if (hit) select(hit[0], true)
       return !!hit
     }
     if (!hit) { select(null); return false } // clic dans le vide : la vue se déplace
+    if (isLocked(hit[1])) { select(hit[0]); return false } // coque verrouillée : sélectionnée, mais la vue se déplace
     if (!group.has(hit[0])) select(hit[0])
-    action = { kind: 'move', from: p, starts: groupItems() } // déplace tout le groupe
+    const one = !multi() && get(hit[0])
+    if (one?.host) { action = { kind: 'slide', id: hit[0], start: one, from: p }; return true } // coulisse le long du mur
+    action = { kind: 'move', from: p, starts: movable() } // déplace tout le groupe
     return true
   }
 
@@ -455,6 +564,17 @@ export function setupPlanEditor(ctx) {
       let sy = ratio(p.y, o.y, c.y)
       if (e.shiftKey) sx = sy = Math.max(sx, sy) // Maj : garde les proportions
       ctx.doc.transact(() => starts.forEach(([id, it]) => set(id, scaleItem(it, o, sx, sy, e.altKey))))
+    } else if (action.kind === 'slide') {
+      const { start, from } = action
+      const host = raw(start.host)
+      if (host) {
+        const t = (q) => wallParam(host, start.edge, q.x, q.y)
+        let dt = t(p) - t(from)
+        if (host.circle) dt = nearTurn(dt, 0)
+        const len = start.t1 - start.t0
+        const t0 = host.circle ? start.t0 + dt : Math.max(0, Math.min(1 - len, start.t0 + dt))
+        set(action.id, { ...start, t0, t1: t0 + len })
+      }
     } else if (action.kind === 'handle') {
       set(action.id, applyHandle(action.start, action.hd, p, e.altKey, action.from))
     } else {
@@ -519,7 +639,7 @@ export function setupPlanEditor(ctx) {
     g.setLineDash([6 * px, 4 * px])
     for (const [, x] of groupItems()) {
       if (x.kind === 'shape') g.stroke(shapePath(x))
-      else if (x.kind === 'door') { g.beginPath(); g.moveTo(x.seg[0], x.seg[1]); g.lineTo(x.seg[2], x.seg[3]); g.stroke() }
+      else if (onWall(x)) { g.beginPath(); g.moveTo(x.seg[0], x.seg[1]); g.lineTo(x.seg[2], x.seg[3]); g.stroke() }
       else { g.beginPath(); g.arc(x.x, x.y, CELL * 0.3, 0, Math.PI * 2); g.stroke() }
     }
     g.setLineDash([])
@@ -577,7 +697,7 @@ export function setupPlanEditor(ctx) {
         g.lineWidth = 2 * px
         g.setLineDash([6 * px, 4 * px])
         if (preview.kind === 'shape') g.stroke(shapePath(preview))
-        else if (preview.kind === 'door') { g.beginPath(); g.moveTo(preview.seg[0], preview.seg[1]); g.lineTo(preview.seg[2], preview.seg[3]); g.stroke() }
+        else if (onWall(preview)) { g.beginPath(); g.moveTo(preview.seg[0], preview.seg[1]); g.lineTo(preview.seg[2], preview.seg[3]); g.stroke() }
       }
     }
     g.restore()
@@ -599,7 +719,7 @@ export function setupPlanEditor(ctx) {
     if (ARROWS[e.key] && group.size) {
       const step = e.shiftKey ? CELL : e.altKey ? 1 : SNAP
       const [dx, dy] = ARROWS[e.key]
-      ctx.doc.transact(() => groupItems().forEach(([id, it]) => set(id, translate(it, dx * step, dy * step))))
+      ctx.doc.transact(() => groupItems().filter(([, it]) => !it.host && !isLocked(it)).forEach(([id, it]) => set(id, translate(it, dx * step, dy * step))))
       e.preventDefault()
       return
     }
@@ -607,8 +727,8 @@ export function setupPlanEditor(ctx) {
     else if (e.key === 'Escape') { tool = 'select'; renderTools(); select(null) }
     else if (e.ctrlKey && e.key.toLowerCase() === 'z') { (e.shiftKey ? undo.redo() : undo.undo()); e.preventDefault() }
     else if (e.ctrlKey && e.key.toLowerCase() === 'y') { undo.redo(); e.preventDefault() }
-    else if (e.ctrlKey && e.key.toLowerCase() === 'c' && group.size) clipboard = groupItems().map(([, it]) => it)
-    else if (e.ctrlKey && e.key.toLowerCase() === 'v' && clipboard.length) { selectAll(clipboard.map((it) => copyTo(it, ctx.deck()))); e.preventDefault() }
+    else if (e.ctrlKey && e.key.toLowerCase() === 'c' && group.size) clipboard = groupItems()
+    else if (e.ctrlKey && e.key.toLowerCase() === 'v' && clipboard.length) { selectAll(copyAll(clipboard, ctx.deck())); e.preventDefault() }
   })
 
   return {
@@ -621,7 +741,9 @@ export function setupPlanEditor(ctx) {
       selected = null
       group = new Set()
       if (on) {
-        ctx.ensureSeeded(ctx.deck())
+        // Tous les étages copiés d'emblée (hors annulation) : la liaison coque / propulseurs écrit sur les autres étages
+        DECKS.forEach((d) => ctx.ensureSeeded(d))
+        attachLoose()
         renderTools()
         renderProps()
         ctx.stage.append(tools, props)
@@ -643,6 +765,7 @@ export function setupPlanEditor(ctx) {
       selected = null
       group = new Set()
       ctx.ensureSeeded(ctx.deck())
+      attachLoose()
       renderProps()
     },
   }

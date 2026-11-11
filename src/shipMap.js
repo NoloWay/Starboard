@@ -2,7 +2,11 @@
 //
 // Le plan est fait d'éléments (stockés dans le Y.Doc, carte `plan`, éditables) :
 //   forme   : { deck, kind: 'shape', type, code, name, icon, radius, z, pts: [[x, y]…] | circle: { x, y, r } }
-//   porte   : { deck, kind: 'door', seg: [x1, y1, x2, y2], level, defaultLevel, access (trappe technique) }
+//   porte   : { deck, kind: 'door', seg: [x1, y1, x2, y2], level, defaultLevel, access (trappe technique), host, edge, t0, t1 }
+//   vitre   : { deck, kind: 'window', seg, host, edge, t0, t1 }
+//   Portes et vitres sont posées sur un mur de pièce : host = identifiant de la pièce, edge = n° du côté
+//   (-1 pour un cercle), t0 / t1 = position le long du côté (0 → 1, ou fraction du tour pour un cercle).
+//   seg n'est qu'une copie : la position réelle est recalculée depuis la pièce (resolveEntries).
 //   caméra  : { deck, kind: 'camera', x, y, angle (degrés) }
 // Tant qu'un étage n'a jamais été modifié, on affiche sa version d'origine, générée depuis l'Excel
 // par `npm run plan-vaisseau` (src/data/gaia-plan.json) : voir seedItems().
@@ -81,15 +85,91 @@ export function iconOf(item) {
 
 // ---------- Étages d'origine (depuis l'Excel) ----------
 
+// ---------- Murs : portes et vitres accrochées aux pièces ----------
+
+/** Segment [x1, y1, x2, y2] d'une portion de mur (corde pour un cercle). */
+export function wallSeg(host, edge, t0, t1) {
+  if (host.circle) {
+    const { x, y, r } = host.circle
+    const a0 = t0 * Math.PI * 2
+    const a1 = t1 * Math.PI * 2
+    return [x + r * Math.cos(a0), y + r * Math.sin(a0), x + r * Math.cos(a1), y + r * Math.sin(a1)]
+  }
+  const n = host.pts.length
+  const [ax, ay] = host.pts[((edge % n) + n) % n]
+  const [bx, by] = host.pts[(edge + 1) % n]
+  return [ax + (bx - ax) * t0, ay + (by - ay) * t0, ax + (bx - ax) * t1, ay + (by - ay) * t1]
+}
+
+/** Position (0 → 1) du projeté d'un point sur un côté de pièce (ou sur le tour d'un cercle). */
+export function wallParam(host, edge, x, y) {
+  if (host.circle) {
+    const a = Math.atan2(y - host.circle.y, x - host.circle.x) / (Math.PI * 2)
+    return (a + 1) % 1
+  }
+  const n = host.pts.length
+  const [ax, ay] = host.pts[edge % n]
+  const [bx, by] = host.pts[(edge + 1) % n]
+  const l = (bx - ax) ** 2 + (by - ay) ** 2
+  return l ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / l)) : 0
+}
+
+/**
+ * Mur de pièce le plus proche d'un segment : { host, edge, t0, t1 } ou null (aucun mur à moins de tol).
+ * shapes : [[id, forme]…] ; seules les pièces (pas la coque ni les propulseurs) portent des murs.
+ */
+export function attachToWall(shapes, seg, tol = CELL * 0.3) {
+  const [x1, y1, x2, y2] = seg
+  let best = null
+  for (const [id, sh] of shapes) {
+    if (sh.kind !== 'shape' || !isRoomType(sh.type)) continue
+    const edges = sh.circle ? [-1] : sh.pts.map((_, i) => i)
+    for (const edge of edges) {
+      let t0 = wallParam(sh, edge, x1, y1)
+      let t1 = wallParam(sh, edge, x2, y2)
+      if (sh.circle && Math.abs(t1 - t0) > 0.5) { if (t0 < t1) t0 += 1; else t1 += 1 } // passage par l'angle 0
+      if (t0 > t1) [t0, t1] = [t1, t0]
+      // Écart au mur : distance des deux extrémités au côté (ou au cercle)
+      const off = (x, y) => (sh.circle ? Math.abs(Math.hypot(x - sh.circle.x, y - sh.circle.y) - sh.circle.r) : distToSeg(x, y, wallSeg(sh, edge, 0, 1)))
+      const d = Math.max(off(x1, y1), off(x2, y2))
+      if (d <= tol && (!best || d < best.d) && Math.abs(t1 - t0) > 1e-3) best = { d, host: id, edge, t0, t1 }
+    }
+  }
+  return best && { host: best.host, edge: best.edge, t0: best.t0, t1: best.t1 }
+}
+
+/**
+ * Éléments d'un étage avec la position réelle des portes et vitres (recalculée depuis leur pièce).
+ * Une porte ou une vitre dont la pièce a disparu n'est pas affichée.
+ */
+export function resolveEntries(entries) {
+  const byId = new Map(entries)
+  const out = []
+  for (const [id, it] of entries) {
+    if (!it.host) { out.push([id, it]); continue }
+    const r = resolveItem(it, byId.get(it.host))
+    if (r) out.push([id, r])
+  }
+  return out
+}
+/** Porte ou vitre placée sur le mur de sa pièce (null si la pièce ou le côté n'existe plus). */
+export function resolveItem(it, host) {
+  if (!host || host.kind !== 'shape' || (!host.circle && !(it.edge < host.pts.length))) return null
+  return { ...it, seg: wallSeg(host, it.edge, it.t0, it.t1), ...(host.circle ? { arc: { ...host.circle, a0: it.t0, a1: it.t1 } } : {}) }
+}
+
 const seeds = new Map()
 /** Éléments d'origine d'un étage : [[id, élément]…], identifiants stables (même résultat chez tous). */
 export function seedItems(deckName) {
   if (seeds.has(deckName)) return seeds.get(deckName)
   const d = plan.decks.find((x) => x.name === deckName)
+  const shapes = !d ? [] : d.shapes.map((s, i) => [`s:${deckName}:${i}`, { deck: deckName, kind: 'shape', icon: '', z: i, ...s }])
+  // Portes d'origine accrochées au mur de pièce le plus proche (elles suivent ensuite la pièce)
+  const onWall = (seg) => ({ seg, ...attachToWall(shapes, seg) })
   const list = !d ? [] : [
-    ...d.shapes.map((s, i) => [`s:${deckName}:${i}`, { deck: deckName, kind: 'shape', icon: '', z: i, ...s }]),
-    ...d.doors.map((x) => [x.id, { deck: deckName, kind: 'door', seg: x.seg, level: x.level, defaultLevel: x.level, access: false }]),
-    ...d.access.map((seg, i) => [`a:${deckName}:${i}`, { deck: deckName, kind: 'door', seg, level: 'Jaune', defaultLevel: 'Jaune', access: true }]),
+    ...shapes,
+    ...d.doors.map((x) => [x.id, { deck: deckName, kind: 'door', ...onWall(x.seg), level: x.level, defaultLevel: x.level, access: false }]),
+    ...d.access.map((seg, i) => [`a:${deckName}:${i}`, { deck: deckName, kind: 'door', ...onWall(seg), level: 'Jaune', defaultLevel: 'Jaune', access: true }]),
     ...d.cameras.map(([x, y], i) => [`c:${deckName}:${i}`, { deck: deckName, kind: 'camera', x, y, angle: 0 }]),
   ]
   seeds.set(deckName, list)
@@ -174,8 +254,8 @@ const distToSeg = (x, y, [x1, y1, x2, y2]) => {
   const t = l ? Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / l)) : 0
   return Math.hypot(x - x1 - t * dx, y - y1 - t * dy)
 }
-export function doorAt(entries, x, y, tolerance = CELL * 0.33) {
-  return entries.find(([, it]) => it.kind === 'door' && distToSeg(x, y, it.seg) <= tolerance) ?? null
+export function doorAt(entries, x, y, tolerance = CELL * 0.33, kinds = ['door']) {
+  return entries.find(([, it]) => kinds.includes(it.kind) && distToSeg(x, y, it.seg) <= tolerance) ?? null
 }
 export function cameraAt(entries, x, y) {
   return entries.find(([, it]) => it.kind === 'camera' && Math.hypot(x - it.x, y - it.y) <= CELL * 0.3) ?? null
@@ -296,6 +376,22 @@ export function drawPlan(g, entries, zoom, gm = false) {
     g.lineWidth = CELL * 0.18
     g.lineCap = 'round'
     g.beginPath(); g.arc(cx, cy, r * 0.82, Math.PI * 1.1, Math.PI * 1.45); g.stroke()
+  }
+
+  // Vitres : double trait bleu clair sur le mur (arc pour un dôme)
+  for (const w of items.filter((it) => it.kind === 'window')) {
+    g.lineCap = 'butt'
+    const stroke = (width, color) => {
+      g.lineWidth = width
+      g.strokeStyle = color
+      g.beginPath()
+      if (w.arc) g.arc(w.arc.x, w.arc.y, w.arc.r, w.arc.a0 * Math.PI * 2, w.arc.a1 * Math.PI * 2)
+      else { g.moveTo(w.seg[0], w.seg[1]); g.lineTo(w.seg[2], w.seg[3]) }
+      g.stroke()
+    }
+    stroke(CELL * 0.2, '#0b1d3a')
+    stroke(CELL * 0.14, '#8fe3ff')
+    stroke(CELL * 0.05, '#e9fbff')
   }
 
   // Trappes techniques (pointillés jaunes) et portes (ouverture, battant rouge, pastille du badge requis)

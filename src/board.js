@@ -1,7 +1,7 @@
 import { h } from './dom.js'
 import { BADGES, DOOR_ACCESS, DOOR_LEVELS, ownerOf, stricterLevel } from './rules.js'
 import { CHARACTER_MIME } from './sheets.js'
-import { CELL, DECKS, bbox, deckSize, doorAt, drawPlan, isRoomType, labelOf, roomsAround, seedItems, shapeAt } from './shipMap.js'
+import { CELL, DECKS, bbox, deckSize, doorAt, drawPlan, isRoomType, labelOf, resolveEntries, roomsAround, seedItems, shapeAt } from './shipMap.js'
 import { setupPlanEditor } from './planEditor.js'
 
 // Plateau : scènes (cartes), image de fond partagée, pions, caméra locale (pan + zoom).
@@ -62,10 +62,10 @@ export function setupBoard(ctx) {
 
   // ---------- Plan du Gaïa : version d'origine (Excel) tant que l'étage n'a jamais été modifié ----------
   const deckMarker = (d) => `deck:${d}`
-  /** Éléments d'un étage : [[id, élément]…] */
+  /** Éléments d'un étage : [[id, élément]…], portes et vitres placées sur le mur de leur pièce */
   function deckEntries(d = deck) {
-    if (!plan.has(deckMarker(d))) return seedItems(d)
-    return [...plan.entries()].filter(([, it]) => it.deck === d && it.kind !== 'deck')
+    if (!plan.has(deckMarker(d))) return resolveEntries(seedItems(d))
+    return resolveEntries([...plan.entries()].filter(([, it]) => it.deck === d && it.kind !== 'deck'))
   }
   /** Copie l'étage d'origine dans le Y.Doc avant sa première modification (identifiants stables : sans doublons). */
   function ensureSeeded(d) {
@@ -370,7 +370,7 @@ export function setupBoard(ctx) {
   }
 
   /** Modifie un élément du plan (l'étage est d'abord copié depuis l'Excel s'il n'a jamais été modifié). */
-  function setItem(id, it) {
+  function setItem(id, { arc, ...it }) { // arc : calculé à l'affichage, jamais stocké
     ensureSeeded(it.deck)
     plan.set(id, it)
   }
